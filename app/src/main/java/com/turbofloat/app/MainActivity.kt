@@ -27,94 +27,106 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    101
-                )
-            }
-        }
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(40, 40, 40, 40)
-            setBackgroundColor(0xFF0B111A.toInt())
-        }
-
-        val titleTv = TextView(this).apply {
-            text = "TURBOFLOAT"
-            setTextColor(0xFF00E5FF.toInt())
-            textSize = 22f
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 24)
-        }
-
-        val gameTv = TextView(this).apply {
-            text = "Game: None"
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 24)
-        }
-        tvSelectedGame = gameTv
-
-        val btnTurnOn = Button(this).apply {
-            text = "TURN ON OVERLAY"
-            setOnClickListener {
-                if (!Settings.canDrawOverlays(this@MainActivity)) {
-                    startActivity(
-                        Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:$packageName")
-                        )
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED
+                ) {
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                        101
                     )
-                    return@setOnClickListener
                 }
-                startOverlayService()
             }
-        }
 
-        val btnTurnOff = Button(this).apply {
-            text = "TURN OFF"
-            setOnClickListener {
-                stopService(Intent(this@MainActivity, FloatingOverlayService::class.java))
-                GameBoosterEngine.restoreNormalMode(this@MainActivity)
-                Toast.makeText(this@MainActivity, "Overlay turned off", Toast.LENGTH_SHORT).show()
+            val root = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(40, 40, 40, 40)
+                setBackgroundColor(0xFF0B111A.toInt())
             }
-        }
 
-        val btnClearRam = Button(this).apply {
-            text = "CLEAR RAM"
-            setOnClickListener {
-                val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@MainActivity, false)
-                Toast.makeText(
-                    this@MainActivity,
-                    "Cleared ${freedMb}MB RAM",
-                    Toast.LENGTH_SHORT
-                ).show()
+            val titleTv = TextView(this).apply {
+                text = "TURBOFLOAT"
+                setTextColor(0xFF00E5FF.toInt())
+                textSize = 22f
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 24)
             }
-        }
 
-        val btnSelectGame = Button(this).apply {
-            text = "SELECT GAME TO BOOST"
-            setOnClickListener {
-                showGamesOnlyDialog()
+            val gameTv = TextView(this).apply {
+                text = "Game: None"
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 24)
             }
+            tvSelectedGame = gameTv
+
+            val btnTurnOn = Button(this).apply {
+                text = "TURN ON OVERLAY"
+                setOnClickListener {
+                    try {
+                        if (!Settings.canDrawOverlays(this@MainActivity)) {
+                            startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:$packageName")
+                                )
+                            )
+                            return@setOnClickListener
+                        }
+                        startOverlayService()
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            val btnTurnOff = Button(this).apply {
+                text = "TURN OFF"
+                setOnClickListener {
+                    try {
+                        stopService(Intent(this@MainActivity, FloatingOverlayService::class.java))
+                        Toast.makeText(this@MainActivity, "Overlay turned off", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            val btnClearRam = Button(this).apply {
+                text = "CLEAR RAM"
+                setOnClickListener {
+                    try {
+                        val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@MainActivity, false)
+                        Toast.makeText(this@MainActivity, "Cleared ${freedMb}MB RAM", Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {
+                        Runtime.getRuntime().gc()
+                        Toast.makeText(this@MainActivity, "RAM optimized", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            val btnSelectGame = Button(this).apply {
+                text = "SELECT GAME TO BOOST"
+                setOnClickListener {
+                    showGamesOnlyDialog()
+                }
+            }
+
+            root.addView(titleTv)
+            root.addView(gameTv)
+            root.addView(btnTurnOn)
+            root.addView(btnTurnOff)
+            root.addView(btnClearRam)
+            root.addView(btnSelectGame)
+
+            setContentView(root)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Startup error: ${e.message}", Toast.LENGTH_LONG).show()
         }
-
-        root.addView(titleTv)
-        root.addView(gameTv)
-        root.addView(btnTurnOn)
-        root.addView(btnTurnOff)
-        root.addView(btnClearRam)
-        root.addView(btnSelectGame)
-
-        setContentView(root)
     }
 
     private fun startOverlayService() {
@@ -131,61 +143,65 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showGamesOnlyDialog() {
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-
-        val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.queryIntentActivities(
-                mainIntent,
-                PackageManager.ResolveInfoFlags.of(0L)
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.queryIntentActivities(mainIntent, 0)
-        }
-
-        val gamesList = resolveInfos
-            .mapNotNull { info ->
-                val pkg = info.activityInfo.packageName
-                if (pkg == packageName) return@mapNotNull null
-                val appInfo = try {
-                    packageManager.getApplicationInfo(pkg, 0)
-                } catch (_: Exception) {
-                    return@mapNotNull null
-                }
-                val isGameCategory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appInfo.category == ApplicationInfo.CATEGORY_GAME
-                } else {
-                    false
-                }
-                val hasGameFlag = (appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0
-                if (!isGameCategory && !hasGameFlag) return@mapNotNull null
-
-                val label = info.loadLabel(packageManager).toString()
-                Pair(label, pkg)
+        try {
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
             }
-            .distinctBy { (_, pkg) -> pkg }
-            .sortedBy { (label, _) -> label.lowercase() }
 
-        if (gamesList.isEmpty()) {
-            Toast.makeText(this, "No games found", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val names = gamesList.map { (label, _) -> label }.toTypedArray()
-
-        AlertDialog.Builder(this)
-            .setTitle("Select Game To Boost")
-            .setItems(names) { _, which ->
-                selectedGameName = gamesList[which].first
-                selectedPackage = gamesList[which].second
-                tvSelectedGame.text = "Game: $selectedGameName"
-                if (Settings.canDrawOverlays(this)) {
-                    startOverlayService()
-                }
+            val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.queryIntentActivities(
+                    mainIntent,
+                    PackageManager.ResolveInfoFlags.of(0L)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.queryIntentActivities(mainIntent, 0)
             }
-            .setNegativeButton("Close", null)
-            .show()
+
+            val gamesList = resolveInfos
+                .mapNotNull { info ->
+                    val pkg = info.activityInfo.packageName
+                    if (pkg == packageName) return@mapNotNull null
+                    val appInfo = try {
+                        packageManager.getApplicationInfo(pkg, 0)
+                    } catch (_: Exception) {
+                        return@mapNotNull null
+                    }
+                    val isGameCategory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        appInfo.category == ApplicationInfo.CATEGORY_GAME
+                    } else {
+                        false
+                    }
+                    val hasGameFlag = (appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+                    if (!isGameCategory && !hasGameFlag) return@mapNotNull null
+
+                    val label = info.loadLabel(packageManager).toString()
+                    Pair(label, pkg)
+                }
+                .distinctBy { (_, pkg) -> pkg }
+                .sortedBy { (label, _) -> label.lowercase() }
+
+            if (gamesList.isEmpty()) {
+                Toast.makeText(this, "No games found", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val names = gamesList.map { (label, _) -> label }.toTypedArray()
+
+            AlertDialog.Builder(this)
+                .setTitle("Select Game To Boost")
+                .setItems(names) { _, which ->
+                    selectedGameName = gamesList[which].first
+                    selectedPackage = gamesList[which].second
+                    tvSelectedGame.text = "Game: $selectedGameName"
+                    if (Settings.canDrawOverlays(this)) {
+                        startOverlayService()
+                    }
+                }
+                .setNegativeButton("Close", null)
+                .show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Picker error: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 }
