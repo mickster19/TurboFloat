@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -19,7 +21,6 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -32,11 +33,17 @@ class FloatingOverlayService : Service() {
     private var windowManager: WindowManager? = null
     private var eyeView: ImageView? = null
     private var menuBoxView: LinearLayout? = null
-    private var appCardContainer: FrameLayout? = null
-    private var selectedGameTv: TextView? = null
+    private var menuBoxParams: WindowManager.LayoutParams? = null
+    private var boxScrollView: ScrollView? = null
+    private var gameGridContainer: LinearLayout? = null
+    private var selectedGameBanner: TextView? = null
+    private var selectedGameIcon: ImageView? = null
 
     private var isMenuOpen: Boolean = false
+    private var isGamePickerVisible: Boolean = false
     private var isDndActive: Boolean = false
+    private var boxWidthDp: Int = 340
+    private var boxHeightDp: Int = 220
 
     private var targetPackage: String = ""
     private var targetName: String = ""
@@ -57,7 +64,7 @@ class FloatingOverlayService : Service() {
         startForegroundNotification()
         showEyeBubble()
         buildFrontMenuBox()
-        refreshGameCard()
+        refreshSelectedGameDisplay()
 
         return START_STICKY
     }
@@ -77,7 +84,7 @@ class FloatingOverlayService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("device connected with TurboFloat")
-            .setContentText("Game Booster ready${if (targetName.isNotEmpty()) " • $targetName" else ""}")
+            .setContentText(if (targetName.isNotEmpty()) "Target: $targetName" else "Game Booster active")
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
             .build()
@@ -171,23 +178,34 @@ class FloatingOverlayService : Service() {
         menuBoxView?.visibility = if (isMenuOpen) View.VISIBLE else View.GONE
         eyeView?.alpha = if (isMenuOpen) 1.0f else 0.9f
         if (isMenuOpen) {
-            refreshGameCard()
+            refreshSelectedGameDisplay()
         }
+    }
+
+    private fun applyBoxDimensions() {
+        val params = menuBoxParams ?: return
+        val density = resources.displayMetrics.density
+        params.width = (boxWidthDp * density).toInt()
+        boxScrollView?.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            (boxHeightDp * density).toInt()
+        ).apply {
+            topMargin = 8
+        }
+        windowManager?.updateViewLayout(menuBoxView, params)
     }
 
     private fun buildFrontMenuBox() {
         if (menuBoxView != null) return
 
         val density = resources.displayMetrics.density
-        val boxWidthPx = (340 * density).toInt()
-        val boxMaxHeightPx = (310 * density).toInt()
 
         val outerBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(16, 16, 16, 16)
+            setPadding(14, 14, 14, 14)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 24f
+                cornerRadius = 22f
                 setColor(0xF50E1621.toInt())
                 setStroke(3, 0xFF00E5FF.toInt())
             }
@@ -200,29 +218,38 @@ class FloatingOverlayService : Service() {
         }
 
         val headerTitle = TextView(this).apply {
-            text = "GAME BOOSTER MENU"
+            text = "TURBO BOX"
             setTextColor(0xFF00E5FF.toInt())
             textSize = 13f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        val speedBtn = Button(this).apply {
-            text = "🚀"
-            textSize = 13f
+        val shrinkBtn = Button(this).apply {
+            text = "-"
+            textSize = 12f
             minWidth = 0
             minimumWidth = 0
             setOnClickListener {
-                val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, isDndActive)
-                Toast.makeText(
-                    this@FloatingOverlayService,
-                    "Speed Up 🚀: Freed ${freedMb}MB RAM for ${if (targetName.isNotEmpty()) targetName else "Game"}",
-                    Toast.LENGTH_SHORT
-                ).show()
+                boxWidthDp = (boxWidthDp - 30).coerceAtLeast(250)
+                boxHeightDp = (boxHeightDp - 35).coerceAtLeast(150)
+                applyBoxDimensions()
+            }
+        }
+
+        val expandBtn = Button(this).apply {
+            text = "+"
+            textSize = 12f
+            minWidth = 0
+            minimumWidth = 0
+            setOnClickListener {
+                boxWidthDp = (boxWidthDp + 30).coerceAtMost(440)
+                boxHeightDp = (boxHeightDp + 35).coerceAtMost(380)
+                applyBoxDimensions()
             }
         }
 
         val closeBtn = Button(this).apply {
-            text = "✕"
+            text = "X"
             textSize = 12f
             minWidth = 0
             minimumWidth = 0
@@ -233,220 +260,311 @@ class FloatingOverlayService : Service() {
         }
 
         headerRow.addView(headerTitle)
-        headerRow.addView(speedBtn)
+        headerRow.addView(shrinkBtn)
+        headerRow.addView(expandBtn)
         headerRow.addView(closeBtn)
 
-        val scrollView = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                boxMaxHeightPx
-            ).apply {
-                topMargin = 10
-            }
-        }
-
-        val contentLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        val gameLabel = TextView(this).apply {
-            text = "Selected Game (Anti-Lag):"
-            setTextColor(0xFFB0BEC5.toInt())
-            textSize = 11f
-        }
-
-        val gameTv = TextView(this).apply {
-            text = if (targetName.isNotEmpty()) "$targetName ($targetPackage)" else "None selected — tap to pick game"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, 4, 0, 8)
-            setOnClickListener {
-                launchGamePickerActivity()
-            }
-        }
-        selectedGameTv = gameTv
-
-        val pickGameBtn = Button(this).apply {
-            text = "SELECT GAME TO BOOST"
-            textSize = 11f
-            setOnClickListener {
-                launchGamePickerActivity()
-            }
-        }
-
-        val cardFrame = FrameLayout(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 16f
-                setColor(0xFF080C12.toInt())
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                (115 * density).toInt()
-            ).apply {
-                topMargin = 8
-            }
-        }
-        appCardContainer = cardFrame
-
-        val quickToolsScroll = HorizontalScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 10
-            }
-        }
-
-        val quickToolsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val dndBtn = Button(this).apply {
-            text = if (isDndActive) "DND: ON" else "DND"
-            textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener {
-                toggleDndMode(this)
-            }
-        }
-
-        val lteOnlyBtn = Button(this).apply {
-            text = "LTE ONLY (4G)"
-            textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener {
-                openLteOnlySettings()
-            }
-        }
-
-        val antiLagBtn = Button(this).apply {
-            text = "ANTI-LAG & RUN"
-            textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener {
-                runAntiLagAndLaunchGame()
-            }
-        }
-
-        quickToolsRow.addView(dndBtn)
-        quickToolsRow.addView(lteOnlyBtn)
-        quickToolsRow.addView(antiLagBtn)
-        quickToolsScroll.addView(quickToolsRow)
-
-        contentLayout.addView(gameLabel)
-        contentLayout.addView(gameTv)
-        contentLayout.addView(pickGameBtn)
-        contentLayout.addView(cardFrame)
-        contentLayout.addView(quickToolsScroll)
-
-        scrollView.addView(contentLayout)
-        outerBox.addView(headerRow)
-        outerBox.addView(scrollView)
-
         val params = WindowManager.LayoutParams(
-            boxWidthPx,
+            (boxWidthDp * density).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayLayoutFlag(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 75
+            gravity = Gravity.TOP or Gravity.START
+            x = 40
+            y = 85
         }
+        menuBoxParams = params
+
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+
+        headerRow.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = params.x
+                    initialY = params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - initialTouchX).toInt()
+                    val dy = (event.rawY - initialTouchY).toInt()
+                    params.x = initialX + dx
+                    params.y = initialY + dy
+                    windowManager?.updateViewLayout(outerBox, params)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        val scrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (boxHeightDp * density).toInt()
+            ).apply {
+                topMargin = 8
+            }
+        }
+        boxScrollView = scrollView
+
+        val contentLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        val activeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(8, 8, 8, 8)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 14f
+                setColor(0xFF080C12.toInt())
+            }
+        }
+
+        val iconSize = (42 * density).toInt()
+        val gameIcon = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(iconSize, iconSize)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setImageResource(android.R.drawable.sym_def_app_icon)
+        }
+        selectedGameIcon = gameIcon
+
+        val gameLabel = TextView(this).apply {
+            text = "No game selected"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                leftMargin = 10
+            }
+        }
+        selectedGameBanner = gameLabel
+
+        activeRow.addView(gameIcon)
+        activeRow.addView(gameLabel)
+
+        val chooseGameBtn = Button(this).apply {
+            text = "CHOOSE GAME TO BOOST"
+            textSize = 11f
+            setOnClickListener {
+                toggleGamesGridInOverlay()
+            }
+        }
+
+        val gamesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(0, 6, 0, 6)
+        }
+        gameGridContainer = gamesContainer
+
+        val dndBtn = Button(this).apply {
+            text = if (isDndActive) "DND: ON" else "DND"
+            textSize = 11f
+            setOnClickListener {
+                toggleDnd(this)
+            }
+        }
+
+        val speedUpBtn = Button(this).apply {
+            text = "SPEED UP 🚀"
+            textSize = 11f
+            setOnClickListener {
+                val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, isDndActive)
+                Toast.makeText(
+                    this@FloatingOverlayService,
+                    "Speed Up 🚀: Freed ${freedMb}MB RAM",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        val antiLagBtn = Button(this).apply {
+            text = "ANTI-LAG"
+            textSize = 11f
+            setOnClickListener {
+                val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, true)
+                Toast.makeText(
+                    this@FloatingOverlayService,
+                    "Anti-Lag enabled (${freedMb}MB freed)",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        val runBtn = Button(this).apply {
+            text = "RUN"
+            textSize = 11f
+            setOnClickListener {
+                launchSelectedGame()
+            }
+        }
+
+        contentLayout.addView(activeRow)
+        contentLayout.addView(chooseGameBtn)
+        contentLayout.addView(gamesContainer)
+        contentLayout.addView(dndBtn)
+        contentLayout.addView(speedUpBtn)
+        contentLayout.addView(antiLagBtn)
+        contentLayout.addView(runBtn)
+
+        scrollView.addView(contentLayout)
+        outerBox.addView(headerRow)
+        outerBox.addView(scrollView)
 
         windowManager?.addView(outerBox, params)
         menuBoxView = outerBox
     }
 
-    private fun refreshGameCard() {
-        selectedGameTv?.text = if (targetName.isNotEmpty()) {
-            "$targetName ($targetPackage)"
+    private fun refreshSelectedGameDisplay() {
+        selectedGameBanner?.text = if (targetName.isNotEmpty()) targetName else "No game selected"
+        if (targetPackage.isNotEmpty()) {
+            try {
+                selectedGameIcon?.setImageDrawable(packageManager.getApplicationIcon(targetPackage))
+            } catch (_: Exception) {
+                selectedGameIcon?.setImageResource(android.R.drawable.sym_def_app_icon)
+            }
         } else {
-            "None selected — tap to pick game"
+            selectedGameIcon?.setImageResource(android.R.drawable.sym_def_app_icon)
+        }
+    }
+
+    private fun getInstalledGamesOnly(): List<Triple<String, String, android.graphics.drawable.Drawable>> {
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
         }
 
-        val container = appCardContainer ?: return
-        container.removeAllViews()
-
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(14, 12, 14, 12)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
+        val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.queryIntentActivities(
+                mainIntent,
+                PackageManager.ResolveInfoFlags.of(0L)
             )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(mainIntent, 0)
         }
 
-        val iconSize = (52 * resources.displayMetrics.density).toInt()
-        val iconView = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(iconSize, iconSize)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            if (targetPackage.isNotEmpty()) {
-                try {
-                    setImageDrawable(packageManager.getApplicationIcon(targetPackage))
+        return resolveInfos
+            .mapNotNull { info ->
+                val pkg = info.activityInfo.packageName
+                if (pkg == packageName) return@mapNotNull null
+                val appInfo = try {
+                    packageManager.getApplicationInfo(pkg, 0)
                 } catch (_: Exception) {
-                    setImageResource(android.R.drawable.sym_def_app_icon)
+                    return@mapNotNull null
                 }
-            } else {
-                setImageResource(android.R.drawable.sym_def_app_icon)
+
+                val isGameCategory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appInfo.category == ApplicationInfo.CATEGORY_GAME
+                } else {
+                    false
+                }
+                val hasGameFlag = (appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+
+                if (!isGameCategory && !hasGameFlag) return@mapNotNull null
+
+                val label = info.loadLabel(packageManager).toString()
+                val icon = info.loadIcon(packageManager)
+                Triple(label, pkg, icon)
             }
-        }
-
-        val infoCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                leftMargin = 12
-            }
-        }
-
-        val titleTv = TextView(this).apply {
-            text = if (targetName.isNotEmpty()) targetName else "No Game Selected"
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }
-
-        val subTv = TextView(this).apply {
-            text = if (targetPackage.isNotEmpty()) {
-                "Anti-Lag & Boost Ready • Tap 🚀 or ANTI-LAG & RUN"
-            } else {
-                "Select a game to enable anti-lag boost"
-            }
-            setTextColor(0xFF00E5FF.toInt())
-            textSize = 11f
-            maxLines = 2
-        }
-
-        infoCol.addView(titleTv)
-        infoCol.addView(subTv)
-
-        row.addView(iconView)
-        row.addView(infoCol)
-        container.addView(row)
+            .distinctBy { (_, pkg, _) -> pkg }
+            .sortedBy { (label, _, _) -> label.lowercase() }
     }
 
-    private fun launchGamePickerActivity() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra("OPEN_APP_PICKER", true)
+    private fun toggleGamesGridInOverlay() {
+        val container = gameGridContainer ?: return
+        isGamePickerVisible = !isGamePickerVisible
+        if (!isGamePickerVisible) {
+            container.visibility = View.GONE
+            return
         }
-        startActivity(intent)
+
+        container.removeAllViews()
+        val games = getInstalledGamesOnly()
+        if (games.isEmpty()) {
+            val emptyTv = TextView(this).apply {
+                text = "No games detected on device"
+                setTextColor(0xFFB0BEC5.toInt())
+                textSize = 11f
+                setPadding(6, 6, 6, 6)
+            }
+            container.addView(emptyTv)
+            container.visibility = View.VISIBLE
+            return
+        }
+
+        val density = resources.displayMetrics.density
+        val iconPx = (36 * density).toInt()
+
+        for ((label, pkg, icon) in games) {
+            val itemRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(8, 6, 8, 6)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12f
+                    setColor(if (pkg == targetPackage) 0xFF16283A.toInt() else 0xFF0B111A.toInt())
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = 6
+                }
+                setOnClickListener {
+                    targetName = label
+                    targetPackage = pkg
+                    refreshSelectedGameDisplay()
+                    startForegroundNotification()
+                    isGamePickerVisible = false
+                    container.visibility = View.GONE
+                    Toast.makeText(
+                        this@FloatingOverlayService,
+                        "Selected game: $label",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+
+            val iconView = ImageView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(iconPx, iconPx)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setImageDrawable(icon)
+            }
+
+            val titleView = TextView(this).apply {
+                text = label
+                setTextColor(Color.WHITE)
+                textSize = 12f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    leftMargin = 10
+                }
+            }
+
+            itemRow.addView(iconView)
+            itemRow.addView(titleView)
+            container.addView(itemRow)
+        }
+
+        container.visibility = View.VISIBLE
     }
 
-    private fun toggleDndMode(btn: Button) {
+    private fun toggleDnd(btn: Button) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !nm.isNotificationPolicyAccessGranted) {
-            Toast.makeText(this, "Grant Do Not Disturb access first", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Grant Do Not Disturb access", Toast.LENGTH_SHORT).show()
             val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
@@ -462,40 +580,11 @@ class FloatingOverlayService : Service() {
             )
         }
         btn.text = if (isDndActive) "DND: ON" else "DND"
-        Toast.makeText(
-            this,
-            if (isDndActive) "Do Not Disturb enabled" else "Do Not Disturb disabled",
-            Toast.LENGTH_SHORT
-        ).show()
     }
 
-    private fun openLteOnlySettings() {
-        val candidates = listOf(
-            Intent("android.settings.DATA_ROAMING_SETTINGS"),
-            Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS),
-            Intent(Settings.ACTION_WIRELESS_SETTINGS)
-        )
-        for (intent in candidates) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (intent.resolveActivity(packageManager) != null) {
-                startActivity(intent)
-                Toast.makeText(this, "Select LTE / 4G Only in network settings", Toast.LENGTH_SHORT).show()
-                return
-            }
-        }
-        Toast.makeText(this, "Unable to open network settings", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun runAntiLagAndLaunchGame() {
-        val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this, isDndActive)
-        Toast.makeText(
-            this,
-            "Anti-Lag Active: Freed ${freedMb}MB RAM",
-            Toast.LENGTH_SHORT
-        ).show()
-
+    private fun launchSelectedGame() {
         if (targetPackage.isEmpty()) {
-            launchGamePickerActivity()
+            toggleGamesGridInOverlay()
             return
         }
 
@@ -507,7 +596,7 @@ class FloatingOverlayService : Service() {
             }
             startActivity(launchIntent)
         } else {
-            Toast.makeText(this, "Game not found on device", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Game not found", Toast.LENGTH_SHORT).show()
         }
     }
 
