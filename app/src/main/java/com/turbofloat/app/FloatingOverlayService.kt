@@ -8,8 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -33,6 +35,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
 class FloatingOverlayService : Service() {
 
@@ -46,45 +49,46 @@ class FloatingOverlayService : Service() {
     private var selectedGameIcon: ImageView? = null
     private var telemetryTv: TextView? = null
 
-    private var isMenuOpen: Boolean = false
-    private var isGamePickerVisible: Boolean = false
-    private var isDndActive: Boolean = false
-    private var isRecordingState: Boolean = false
-    private var boxWidthDp: Int = 345
-    private var boxHeightDp: Int = 250
+    private var isMenuOpen = false
+    private var isGamePickerVisible = false
+    private var isDndActive = false
+    private var isRecordingState = false
+    private var boxWidthDp = 345
+    private var boxHeightDp = 250
 
-    private var targetPackage: String = ""
-    private var targetName: String = ""
-    private var useFreeform: Boolean = false
-    private var enableDnd: Boolean = false
+    private var targetPackage = ""
+    private var targetName = ""
+    private var useFreeform = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var frameCounter = 0
     private var lastFpsTimestampNanos = 0L
     private var currentFps = 0
-
     private var lastTotalBytes = 0L
     private var lastNetTimestampMs = 0L
 
     private val fpsFrameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-            if (lastFpsTimestampNanos == 0L) {
-                lastFpsTimestampNanos = frameTimeNanos
-            }
+            if (lastFpsTimestampNanos == 0L) lastFpsTimestampNanos = frameTimeNanos
             frameCounter++
-            val elapsedNanos = frameTimeNanos - lastFpsTimestampNanos
-            if (elapsedNanos >= 1_000_000_000L) {
+            if (frameTimeNanos - lastFpsTimestampNanos >= 1_000_000_000L) {
                 currentFps = frameCounter
                 frameCounter = 0
                 lastFpsTimestampNanos = frameTimeNanos
             }
-            Choreographer.getInstance().postFrameCallback(this)
+            try {
+                Choreographer.getInstance().postFrameCallback(this)
+            } catch (_: Exception) {
+            }
         }
     }
 
     private val telemetryRunnable = object : Runnable {
         override fun run() {
-            updateTelemetryDisplay()
+            try {
+                updateTelemetryDisplay()
+            } catch (_: Exception) {
+            }
             mainHandler.postDelayed(this, 1000L)
         }
     }
@@ -92,94 +96,100 @@ class FloatingOverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent != null) {
-            targetPackage = intent.getStringExtra("TARGET_PACKAGE") ?: targetPackage
-            targetName = intent.getStringExtra("TARGET_NAME") ?: targetName
-            useFreeform = intent.getBooleanExtra("USE_FREEFORM", useFreeform)
-            enableDnd = intent.getBooleanExtra("ENABLE_DND", enableDnd)
-            isDndActive = enableDnd
-        }
-
         startForegroundNotification()
-        showAppBubble()
-        buildFrontMenuBox()
-        refreshSelectedGameDisplay()
-        startMonitors()
-
+        try {
+            if (intent != null) {
+                targetPackage = intent.getStringExtra("TARGET_PACKAGE") ?: targetPackage
+                targetName = intent.getStringExtra("TARGET_NAME") ?: targetName
+                useFreeform = intent.getBooleanExtra("USE_FREEFORM", useFreeform)
+            }
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+            showAppBubble()
+            buildFrontMenuBox()
+            refreshSelectedGameDisplay()
+            startMonitors()
+        } catch (e: Exception) {
+            mainHandler.post {
+                Toast.makeText(this, "Overlay error: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
         return START_STICKY
     }
 
     private fun startForegroundNotification() {
-        val channelId = "turbofloat_game_booster_channel"
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        try {
+            val channelId = "turbofloat_game_booster_channel"
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    channelId,
+                    "TurboFloat Game Booster",
+                    NotificationManager.IMPORTANCE_LOW
+                )
+                nm?.createNotificationChannel(channel)
+            }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "TurboFloat Game Booster",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            nm.createNotificationChannel(channel)
+            val notification: Notification = NotificationCompat.Builder(this, channelId)
+                .setContentTitle("device connected with TurboFloat")
+                .setContentText(if (targetName.isNotEmpty()) "Target: $targetName" else "Game Booster active")
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setOngoing(true)
+                .build()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(1001, notification)
+            }
+        } catch (_: Exception) {
         }
-
-        val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("device connected with TurboFloat")
-            .setContentText(if (targetName.isNotEmpty()) "Target: $targetName" else "Game Booster active")
-            .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setOngoing(true)
-            .build()
-
-        startForeground(1001, notification)
     }
 
-    private fun overlayLayoutFlag(): Int {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    private fun overlayLayoutFlag(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
-    }
 
-    private fun resolveAppIconDrawable() = try {
+    private fun resolveAppIconDrawable(): Drawable? = try {
         packageManager.getApplicationIcon(packageName)
     } catch (_: Exception) {
-        getDrawable(android.R.drawable.sym_def_app_icon)
+        ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon)
     }
 
     private fun startMonitors() {
         val rx = TrafficStats.getTotalRxBytes()
         val tx = TrafficStats.getTotalTxBytes()
-        lastTotalBytes = if (rx != TrafficStats.UNSUPPORTED.toLong() && tx != TrafficStats.UNSUPPORTED.toLong()) {
-            rx + tx
-        } else {
-            0L
-        }
+        lastTotalBytes = if (rx != TrafficStats.UNSUPPORTED.toLong() && tx != TrafficStats.UNSUPPORTED.toLong()) rx + tx else 0L
         lastNetTimestampMs = System.currentTimeMillis()
-
-        Choreographer.getInstance().removeFrameCallback(fpsFrameCallback)
-        Choreographer.getInstance().postFrameCallback(fpsFrameCallback)
-
+        try {
+            Choreographer.getInstance().removeFrameCallback(fpsFrameCallback)
+            Choreographer.getInstance().postFrameCallback(fpsFrameCallback)
+        } catch (_: Exception) {
+        }
         mainHandler.removeCallbacks(telemetryRunnable)
         mainHandler.post(telemetryRunnable)
     }
 
     private fun stopMonitors() {
-        Choreographer.getInstance().removeFrameCallback(fpsFrameCallback)
+        try {
+            Choreographer.getInstance().removeFrameCallback(fpsFrameCallback)
+        } catch (_: Exception) {
+        }
         mainHandler.removeCallbacks(telemetryRunnable)
     }
 
-    private fun formatSpeed(bytesPerSec: Double): String {
-        return when {
-            bytesPerSec >= 1_048_576.0 -> String.format("%.1f MB/s", bytesPerSec / 1_048_576.0)
-            bytesPerSec >= 1024.0 -> String.format("%.0f KB/s", bytesPerSec / 1024.0)
-            else -> "${bytesPerSec.toInt()} B/s"
-        }
+    private fun formatSpeed(bytesPerSec: Double): String = when {
+        bytesPerSec >= 1_048_576.0 -> String.format("%.1f MB/s", bytesPerSec / 1_048_576.0)
+        bytesPerSec >= 1024.0 -> String.format("%.0f KB/s", bytesPerSec / 1024.0)
+        else -> "${bytesPerSec.toInt()} B/s"
     }
 
-    private fun currentNetworkTypeLabel(): String {
+    private fun currentNetworkTypeLabel(): String = try {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val net = cm.activeNetwork ?: return "OFF"
             val caps = cm.getNetworkCapabilities(net) ?: return "NET"
             when {
@@ -192,12 +202,13 @@ class FloatingOverlayService : Service() {
             val info = cm.activeNetworkInfo
             if (info != null && info.isConnected) info.typeName.uppercase() else "OFF"
         }
+    } catch (_: Exception) {
+        "NET"
     }
 
     private fun updateTelemetryDisplay() {
         val nowMs = System.currentTimeMillis()
         val elapsedSec = ((nowMs - lastNetTimestampMs).coerceAtLeast(1L)) / 1000.0
-
         val rx = TrafficStats.getTotalRxBytes()
         val tx = TrafficStats.getTotalTxBytes()
         val netText = if (rx != TrafficStats.UNSUPPORTED.toLong() && tx != TrafficStats.UNSUPPORTED.toLong()) {
@@ -210,9 +221,7 @@ class FloatingOverlayService : Service() {
             lastNetTimestampMs = nowMs
             "N/A"
         }
-
-        val netType = currentNetworkTypeLabel()
-        telemetryTv?.text = "FPS: $currentFps  |  $netType: $netText"
+        telemetryTv?.text = "FPS: $currentFps  |  ${currentNetworkTypeLabel()}: $netText"
     }
 
     private fun stabilizeNetworkNow() {
@@ -225,12 +234,11 @@ class FloatingOverlayService : Service() {
             Toast.LENGTH_SHORT
         ).show()
 
-        val candidates = listOf(
+        for (intent in listOf(
             Intent("android.settings.DATA_ROAMING_SETTINGS"),
             Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS),
             Intent(Settings.ACTION_WIRELESS_SETTINGS)
-        )
-        for (intent in candidates) {
+        )) {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (intent.resolveActivity(packageManager) != null) {
                 startActivity(intent)
@@ -239,34 +247,14 @@ class FloatingOverlayService : Service() {
         }
     }
 
-    private fun triggerScreenshotTool() {
-        Toast.makeText(
-            this,
-            "Screenshot: Use Power + Volume Down or quick-settings tile",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    private fun toggleScreenRecordTool(btn: Button) {
-        isRecordingState = !isRecordingState
-        btn.text = if (isRecordingState) "STOP REC" else "SCREEN REC"
-        Toast.makeText(
-            this,
-            if (isRecordingState) "Screen Recorder marked ACTIVE — open system Screen Record tile"
-            else "Screen Recorder stopped",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
     private fun showAppBubble() {
+        val wm = windowManager ?: return
         if (bubbleView != null) {
             bubbleView?.setImageDrawable(resolveAppIconDrawable())
             return
         }
 
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val sizePx = (50 * resources.displayMetrics.density).toInt()
-
         val bubble = ImageView(this).apply {
             setImageDrawable(resolveAppIconDrawable())
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -280,11 +268,8 @@ class FloatingOverlayService : Service() {
         }
 
         val params = WindowManager.LayoutParams(
-            sizePx,
-            sizePx,
-            overlayLayoutFlag(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            sizePx, sizePx, overlayLayoutFlag(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -292,51 +277,46 @@ class FloatingOverlayService : Service() {
             y = 220
         }
 
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-        var isMoving = false
+        var initX = 0
+        var initY = 0
+        var touchX = 0f
+        var touchY = 0f
+        var moved = false
 
         bubble.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    isMoving = false
-                    true
+                    initX = params.x; initY = params.y; touchX = event.rawX; touchY = event.rawY; moved = false; true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - initialTouchX).toInt()
-                    val dy = (event.rawY - initialTouchY).toInt()
+                    val dx = (event.rawX - touchX).toInt()
+                    val dy = (event.rawY - touchY).toInt()
                     if (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10) {
-                        isMoving = true
-                        params.x = initialX + dx
-                        params.y = initialY + dy
-                        windowManager?.updateViewLayout(v, params)
+                        moved = true
+                        params.x = initX + dx
+                        params.y = initY + dy
+                        try { wm.updateViewLayout(v, params) } catch (_: Exception) {}
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isMoving) {
-                        toggleFrontMenuBox()
-                    }
+                    if (!moved) toggleFrontMenuBox()
                     true
                 }
                 else -> false
             }
         }
 
-        windowManager?.addView(bubble, params)
-        bubbleView = bubble
+        try {
+            wm.addView(bubble, params)
+            bubbleView = bubble
+        } catch (_: Exception) {
+        }
     }
 
     private fun toggleFrontMenuBox() {
         isMenuOpen = !isMenuOpen
         menuBoxView?.visibility = if (isMenuOpen) View.VISIBLE else View.GONE
-        bubbleView?.alpha = if (isMenuOpen) 1.0f else 0.92f
         if (isMenuOpen) {
             refreshSelectedGameDisplay()
             updateTelemetryDisplay()
@@ -345,22 +325,21 @@ class FloatingOverlayService : Service() {
 
     private fun applyBoxDimensions() {
         val params = menuBoxParams ?: return
+        val wm = windowManager ?: return
         val density = resources.displayMetrics.density
         params.width = (boxWidthDp * density).toInt()
         boxScrollView?.layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             (boxHeightDp * density).toInt()
-        ).apply {
-            topMargin = 8
-        }
-        windowManager?.updateViewLayout(menuBoxView, params)
+        ).apply { topMargin = 8 }
+        try { wm.updateViewLayout(menuBoxView, params) } catch (_: Exception) {}
     }
 
     private fun buildFrontMenuBox() {
+        val wm = windowManager ?: return
         if (menuBoxView != null) return
 
         val density = resources.displayMetrics.density
-
         val outerBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(14, 14, 14, 14)
@@ -388,8 +367,7 @@ class FloatingOverlayService : Service() {
         val shrinkBtn = Button(this).apply {
             text = "-"
             textSize = 12f
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = 0; minimumWidth = 0
             setOnClickListener {
                 boxWidthDp = (boxWidthDp - 30).coerceAtLeast(250)
                 boxHeightDp = (boxHeightDp - 35).coerceAtLeast(160)
@@ -400,8 +378,7 @@ class FloatingOverlayService : Service() {
         val expandBtn = Button(this).apply {
             text = "+"
             textSize = 12f
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = 0; minimumWidth = 0
             setOnClickListener {
                 boxWidthDp = (boxWidthDp + 30).coerceAtMost(440)
                 boxHeightDp = (boxHeightDp + 35).coerceAtMost(400)
@@ -412,8 +389,7 @@ class FloatingOverlayService : Service() {
         val closeBtn = Button(this).apply {
             text = "X"
             textSize = 12f
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = 0; minimumWidth = 0
             setOnClickListener {
                 isMenuOpen = false
                 menuBoxView?.visibility = View.GONE
@@ -429,8 +405,7 @@ class FloatingOverlayService : Service() {
             (boxWidthDp * density).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayLayoutFlag(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -439,26 +414,20 @@ class FloatingOverlayService : Service() {
         }
         menuBoxParams = params
 
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
+        var initX = 0
+        var initY = 0
+        var touchX = 0f
+        var touchY = 0f
 
         headerRow.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    true
+                    initX = params.x; initY = params.y; touchX = event.rawX; touchY = event.rawY; true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - initialTouchX).toInt()
-                    val dy = (event.rawY - initialTouchY).toInt()
-                    params.x = initialX + dx
-                    params.y = initialY + dy
-                    windowManager?.updateViewLayout(outerBox, params)
+                    params.x = initX + (event.rawX - touchX).toInt()
+                    params.y = initY + (event.rawY - touchY).toInt()
+                    try { wm.updateViewLayout(outerBox, params) } catch (_: Exception) {}
                     true
                 }
                 else -> false
@@ -480,9 +449,7 @@ class FloatingOverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 8
-            }
+            ).apply { topMargin = 8 }
         }
         telemetryTv = hudBar
 
@@ -490,15 +457,11 @@ class FloatingOverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 (boxHeightDp * density).toInt()
-            ).apply {
-                topMargin = 8
-            }
+            ).apply { topMargin = 8 }
         }
         boxScrollView = scrollView
 
-        val contentLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        val contentLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         val activeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -537,9 +500,7 @@ class FloatingOverlayService : Service() {
         val chooseGameBtn = Button(this).apply {
             text = "CHOOSE GAME TO BOOST"
             textSize = 11f
-            setOnClickListener {
-                toggleGamesGridInOverlay()
-            }
+            setOnClickListener { toggleGamesGridInOverlay() }
         }
 
         val gamesContainer = LinearLayout(this).apply {
@@ -553,9 +514,7 @@ class FloatingOverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 6
-            }
+            ).apply { topMargin = 6 }
         }
 
         val actionsRow = LinearLayout(this).apply {
@@ -566,81 +525,66 @@ class FloatingOverlayService : Service() {
         val dndBtn = Button(this).apply {
             text = if (isDndActive) "DND: ON" else "DND"
             textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener {
-                toggleDnd(this)
-            }
+            minWidth = 0; minimumWidth = 0
+            setOnClickListener { toggleDnd(this) }
         }
 
         val speedUpBtn = Button(this).apply {
             text = "SPEED UP 🚀"
             textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = 0; minimumWidth = 0
             setOnClickListener {
                 val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, isDndActive)
-                Toast.makeText(
-                    this@FloatingOverlayService,
-                    "Speed Up 🚀: Freed ${freedMb}MB RAM",
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(this@FloatingOverlayService, "Speed Up 🚀: Freed ${freedMb}MB RAM", Toast.LENGTH_SHORT).show()
             }
         }
 
         val antiLagBtn = Button(this).apply {
             text = "ANTI-LAG"
             textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = 0; minimumWidth = 0
             setOnClickListener {
                 val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, true)
-                Toast.makeText(
-                    this@FloatingOverlayService,
-                    "Anti-Lag active (${freedMb}MB freed)",
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(this@FloatingOverlayService, "Anti-Lag active (${freedMb}MB freed)", Toast.LENGTH_SHORT).show()
             }
         }
 
         val netFixBtn = Button(this).apply {
             text = "NET FIX"
             textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener {
-                stabilizeNetworkNow()
-            }
+            minWidth = 0; minimumWidth = 0
+            setOnClickListener { stabilizeNetworkNow() }
         }
 
         val screenshotBtn = Button(this).apply {
             text = "SCREENSHOT"
             textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = 0; minimumWidth = 0
             setOnClickListener {
-                triggerScreenshotTool()
+                Toast.makeText(this@FloatingOverlayService, "Screenshot: Use Power + Volume Down", Toast.LENGTH_SHORT).show()
             }
         }
 
         val recordBtn = Button(this).apply {
             text = if (isRecordingState) "STOP REC" else "SCREEN REC"
             textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
+            minWidth = 0; minimumWidth = 0
             setOnClickListener {
-                toggleScreenRecordTool(this)
+                isRecordingState = !isRecordingState
+                text = if (isRecordingState) "STOP REC" else "SCREEN REC"
+                Toast.makeText(
+                    this@FloatingOverlayService,
+                    if (isRecordingState) "Screen Recorder marked ACTIVE" else "Screen Recorder stopped",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
 
         val runBtn = Button(this).apply {
             text = "RUN"
             textSize = 11f
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener {
-                launchSelectedGame()
-            }
+            minWidth = 0; minimumWidth = 0
+            setOnClickListener { launchSelectedGame() }
         }
 
         actionsRow.addView(dndBtn)
@@ -662,8 +606,11 @@ class FloatingOverlayService : Service() {
         outerBox.addView(hudBar)
         outerBox.addView(scrollView)
 
-        windowManager?.addView(outerBox, params)
-        menuBoxView = outerBox
+        try {
+            wm.addView(outerBox, params)
+            menuBoxView = outerBox
+        } catch (_: Exception) {
+        }
     }
 
     private fun refreshSelectedGameDisplay() {
@@ -679,46 +626,23 @@ class FloatingOverlayService : Service() {
         }
     }
 
-    private fun getInstalledGamesOnly(): List<Triple<String, String, android.graphics.drawable.Drawable>> {
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-
+    private fun getInstalledGamesOnly(): List<Triple<String, String, Drawable>> {
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.queryIntentActivities(
-                mainIntent,
-                PackageManager.ResolveInfoFlags.of(0L)
-            )
+            packageManager.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(0L))
         } else {
             @Suppress("DEPRECATION")
             packageManager.queryIntentActivities(mainIntent, 0)
         }
-
-        return resolveInfos
-            .mapNotNull { info ->
-                val pkg = info.activityInfo.packageName
-                if (pkg == packageName) return@mapNotNull null
-                val appInfo = try {
-                    packageManager.getApplicationInfo(pkg, 0)
-                } catch (_: Exception) {
-                    return@mapNotNull null
-                }
-
-                val isGameCategory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appInfo.category == ApplicationInfo.CATEGORY_GAME
-                } else {
-                    false
-                }
-                val hasGameFlag = (appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0
-
-                if (!isGameCategory && !hasGameFlag) return@mapNotNull null
-
-                val label = info.loadLabel(packageManager).toString()
-                val icon = info.loadIcon(packageManager)
-                Triple(label, pkg, icon)
-            }
-            .distinctBy { (_, pkg, _) -> pkg }
-            .sortedBy { (label, _, _) -> label.lowercase() }
+        return resolveInfos.mapNotNull { info ->
+            val pkg = info.activityInfo.packageName
+            if (pkg == packageName) return@mapNotNull null
+            val appInfo = try { packageManager.getApplicationInfo(pkg, 0) } catch (_: Exception) { return@mapNotNull null }
+            val isGameCategory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) appInfo.category == ApplicationInfo.CATEGORY_GAME else false
+            val hasGameFlag = (appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+            if (!isGameCategory && !hasGameFlag) return@mapNotNull null
+            Triple(info.loadLabel(packageManager).toString(), pkg, info.loadIcon(packageManager))
+        }.distinctBy { (_, pkg, _) -> pkg }.sortedBy { (label, _, _) -> label.lowercase() }
     }
 
     private fun toggleGamesGridInOverlay() {
@@ -728,26 +652,20 @@ class FloatingOverlayService : Service() {
             container.visibility = View.GONE
             return
         }
-
         container.removeAllViews()
         val games = getInstalledGamesOnly()
         if (games.isEmpty()) {
-            val emptyTv = TextView(this).apply {
+            container.addView(TextView(this).apply {
                 text = "No games detected on device"
                 setTextColor(0xFFB0BEC5.toInt())
                 textSize = 11f
-                setPadding(6, 6, 6, 6)
-            }
-            container.addView(emptyTv)
+            })
             container.visibility = View.VISIBLE
             return
         }
-
-        val density = resources.displayMetrics.density
-        val iconPx = (36 * density).toInt()
-
+        val iconPx = (36 * resources.displayMetrics.density).toInt()
         for ((label, pkg, icon) in games) {
-            val itemRow = LinearLayout(this).apply {
+            val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(8, 6, 8, 6)
@@ -759,9 +677,7 @@ class FloatingOverlayService : Service() {
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    bottomMargin = 6
-                }
+                ).apply { bottomMargin = 6 }
                 setOnClickListener {
                     targetName = label
                     targetPackage = pkg
@@ -769,21 +685,15 @@ class FloatingOverlayService : Service() {
                     startForegroundNotification()
                     isGamePickerVisible = false
                     container.visibility = View.GONE
-                    Toast.makeText(
-                        this@FloatingOverlayService,
-                        "Selected game: $label",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(this@FloatingOverlayService, "Selected game: $label", Toast.LENGTH_SHORT).show()
                 }
             }
-
-            val iconView = ImageView(this).apply {
+            row.addView(ImageView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(iconPx, iconPx)
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 setImageDrawable(icon)
-            }
-
-            val titleView = TextView(this).apply {
+            })
+            row.addView(TextView(this).apply {
                 text = label
                 setTextColor(Color.WHITE)
                 textSize = 12f
@@ -792,13 +702,9 @@ class FloatingOverlayService : Service() {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     leftMargin = 10
                 }
-            }
-
-            itemRow.addView(iconView)
-            itemRow.addView(titleView)
-            container.addView(itemRow)
+            })
+            container.addView(row)
         }
-
         container.visibility = View.VISIBLE
     }
 
@@ -806,13 +712,11 @@ class FloatingOverlayService : Service() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !nm.isNotificationPolicyAccessGranted) {
             Toast.makeText(this, "Grant Do Not Disturb access", Toast.LENGTH_SHORT).show()
-            val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
+            })
             return
         }
-
         isDndActive = !isDndActive
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             nm.setInterruptionFilter(
@@ -828,7 +732,6 @@ class FloatingOverlayService : Service() {
             toggleGamesGridInOverlay()
             return
         }
-
         val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -843,18 +746,8 @@ class FloatingOverlayService : Service() {
 
     override fun onDestroy() {
         stopMonitors()
-        menuBoxView?.let { view ->
-            try {
-                windowManager?.removeView(view)
-            } catch (_: Exception) {
-            }
-        }
-        bubbleView?.let { view ->
-            try {
-                windowManager?.removeView(view)
-            } catch (_: Exception) {
-            }
-        }
+        menuBoxView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
+        bubbleView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
         menuBoxView = null
         bubbleView = null
         super.onDestroy()
