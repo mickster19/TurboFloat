@@ -1,4 +1,3 @@
-
 package com.turbofloat.app
 
 import android.app.Notification
@@ -27,8 +26,8 @@ class FloatingOverlayService : Service() {
     private var windowManager: WindowManager? = null
     private var eyeView: ImageView? = null
     private var isOverlayVisible: Boolean = true
-    private var targetPackage: String = "com.whatsapp"
-    private var targetName: String = "WhatsApp"
+    private var targetPackage: String = ""
+    private var targetName: String = ""
     private var useFreeform: Boolean = false
     private var enableDnd: Boolean = false
 
@@ -55,8 +54,8 @@ class FloatingOverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
-            targetPackage = intent.getStringExtra("TARGET_PACKAGE") ?: "com.whatsapp"
-            targetName = intent.getStringExtra("TARGET_NAME") ?: "WhatsApp"
+            targetPackage = intent.getStringExtra("TARGET_PACKAGE") ?: ""
+            targetName = intent.getStringExtra("TARGET_NAME") ?: "App"
             useFreeform = intent.getBooleanExtra("USE_FREEFORM", false)
             enableDnd = intent.getBooleanExtra("ENABLE_DND", false)
         }
@@ -187,6 +186,15 @@ class FloatingOverlayService : Service() {
     }
 
     private fun launchTargetApp() {
+        if (targetPackage.isEmpty()) {
+            Toast.makeText(
+                this,
+                "Hakuna app iliyochaguliwa kwenye list",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
         val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

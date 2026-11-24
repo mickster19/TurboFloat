@@ -1,6 +1,7 @@
 package com.turbofloat.app
 
 import android.Manifest
+import android.app.AlertDialog
 import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.content.Context
@@ -12,7 +13,6 @@ import android.os.Bundle
 import android.os.Process
 import android.provider.Settings
 import android.widget.Button
-import android.widget.RadioGroup
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -28,8 +28,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvSelectedApp: TextView
     private lateinit var tvRamInfo: TextView
 
-    private var selectedPackage: String = "com.whatsapp"
-    private var selectedAppName: String = "WhatsApp"
+    private var selectedPackage: String = ""
+    private var selectedAppName: String = "Haijachaguliwa (Chagua kwenye list)"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,9 +47,29 @@ class MainActivity : AppCompatActivity() {
         val btnStartOverlay = findViewById<Button>(R.id.btnStartOverlay)
         val btnStopOverlay = findViewById<Button>(R.id.btnStopOverlay)
         val btnBoostNow = findViewById<Button>(R.id.btnBoostNow)
-        val rgApps = findViewById<RadioGroup>(R.id.rgTargetApps)
         val switchDnd = findViewById<Switch>(R.id.switchDnd)
         val switchFreeform = findViewById<Switch>(R.id.switchFreeform)
+
+        tvSelectedApp.text = "App Iliyochaguliwa: $selectedAppName"
+
+        tvSelectedApp.setOnClickListener {
+            showInstalledAppsDialog()
+        }
+
+        btnStartOverlay.findViewById<Button>(R.id.btnStartOverlay)
+
+        val pickAppButton = Button(this).apply {
+            text = "CHAGUA APP KUTOKA KWENYE LIST"
+            setOnClickListener {
+                showInstalledAppsDialog()
+            }
+        }
+        (tvSelectedApp.parent as? android.view.ViewGroup)?.let { parent ->
+            val idx = parent.indexOfChild(tvSelectedApp)
+            if (idx >= 0) {
+                parent.addView(pickAppButton, idx + 1)
+            }
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -92,28 +112,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        rgApps.setOnCheckedChangeListener { _, checkedId ->
-            when (checkedId) {
-                R.id.rbWhatsapp -> {
-                    selectedPackage = "com.whatsapp"
-                    selectedAppName = "WhatsApp"
-                }
-                R.id.rbTelegram -> {
-                    selectedPackage = "org.telegram.messenger"
-                    selectedAppName = "Telegram"
-                }
-                R.id.rbYoutube -> {
-                    selectedPackage = "com.google.android.youtube"
-                    selectedAppName = "YouTube"
-                }
-                R.id.rbChrome -> {
-                    selectedPackage = "com.android.chrome"
-                    selectedAppName = "Browser / Web"
-                }
-            }
-            tvSelectedApp.text = "App Iliyochaguliwa: $selectedAppName ($selectedPackage)"
-        }
-
         btnBoostNow.setOnClickListener {
             val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this, switchDnd.isChecked)
             updateRamDisplay()
@@ -125,6 +123,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnStartOverlay.setOnClickListener {
+            if (selectedPackage.isEmpty()) {
+                Toast.makeText(
+                    this,
+                    "Chagua app kwanza kutoka kwenye list!",
+                    Toast.LENGTH_SHORT
+                ).show()
+                showInstalledAppsDialog()
+                return@setOnClickListener
+            }
+
             if (!Settings.canDrawOverlays(this)) {
                 Toast.makeText(
                     this,
@@ -152,7 +160,7 @@ class MainActivity : AppCompatActivity() {
 
             Toast.makeText(
                 this,
-                "Ka-icon ka Jicho kamewashwa! Ingia kwenye eFootball sasa.",
+                "Ka-icon ka Jicho kamewashwa kwa ajili ya $selectedAppName!",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -162,6 +170,51 @@ class MainActivity : AppCompatActivity() {
             GameBoosterEngine.restoreNormalMode(this)
             Toast.makeText(this, "TurboFloat imezimwa.", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun showInstalledAppsDialog() {
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+
+        val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.queryIntentActivities(
+                mainIntent,
+                PackageManager.ResolveInfoFlags.of(0L)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(mainIntent, 0)
+        }
+
+        val appsList = resolveInfos
+            .map { info ->
+                val label = info.loadLabel(packageManager).toString()
+                val pkg = info.activityInfo.packageName
+                Pair(label, pkg)
+            }
+            .filter { (_, pkg) -> pkg != packageName }
+            .distinctBy { (_, pkg) -> pkg }
+            .sortedBy { (label, _) -> label.lowercase() }
+
+        if (appsList.isEmpty()) {
+            Toast.makeText(this, "Hakuna apps zilizopatikana kwenye list.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val displayNames = appsList.map { (label, pkg) -> "$label ($pkg)" }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Chagua App ya Ku-overlay")
+            .setItems(displayNames) { _, which ->
+                val chosen = appsList[which]
+                selectedAppName = chosen.first
+                selectedPackage = chosen.second
+                tvSelectedApp.text = "App Iliyochaguliwa: $selectedAppName ($selectedPackage)"
+                Toast.makeText(this, "Umechagua: $selectedAppName", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Funga", null)
+            .show()
     }
 
     override fun onResume() {
