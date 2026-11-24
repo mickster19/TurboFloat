@@ -164,30 +164,7 @@ import androidx.core.content.ContextCompatclass MainActivity : AppCompatActivity
 }    private fun updateRamDisplay() {
         val stats = GameBoosterEngine.getRamStats(this)
         tvRamInfo.text = "RAM Inayotumika: ${stats.usedMb} MB / ${stats.totalMb} MB (${stats.usedPercent}%)"
-    
-
-    fun showAppPickerDialog() {
-        val mainIntent = android.content.Intent(android.content.Intent.ACTION_MAIN, null).apply {
-            addCategory(android.content.Intent.CATEGORY_LAUNCHER)
-        }
-        val resolveInfos = packageManager.queryIntentActivities(mainIntent, 0)
-            .filter { it.activityInfo.packageName != packageName }
-            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
-        val labels: Array<CharSequence> = resolveInfos.map { it.loadLabel(packageManager).toString() as CharSequence }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Chagua App ya Floating")
-            .setItems(labels) { _, which: Int ->
-                val chosen = resolveInfos[which]
-                val pkgName = chosen.activityInfo.packageName
-                val appLabel = chosen.loadLabel(packageManager).toString()
-                getSharedPreferences("turbofloat_prefs", android.content.Context.MODE_PRIVATE).edit()
-                    .putString("target_package", pkgName)
-                    .putString("target_app_name", appLabel)
-                    .apply()
-            }
-            .show()
-    }
-}    private fun hasUsageStatsPermission(): Boolean {
+    }    private fun hasUsageStatsPermission(): Boolean {
         val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             appOps.unsafeCheckOpNoThrow(
@@ -204,30 +181,8 @@ import androidx.core.content.ContextCompatclass MainActivity : AppCompatActivity
             )
         }
         return mode == AppOpsManager.MODE_ALLOWED
-    
-
-    fun showAppPickerDialog() {
-        val mainIntent = android.content.Intent(android.content.Intent.ACTION_MAIN, null).apply {
-            addCategory(android.content.Intent.CATEGORY_LAUNCHER)
-        }
-        val resolveInfos = packageManager.queryIntentActivities(mainIntent, 0)
-            .filter { it.activityInfo.packageName != packageName }
-            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
-        val labels: Array<CharSequence> = resolveInfos.map { it.loadLabel(packageManager).toString() as CharSequence }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Chagua App ya Floating")
-            .setItems(labels) { _, which: Int ->
-                val chosen = resolveInfos[which]
-                val pkgName = chosen.activityInfo.packageName
-                val appLabel = chosen.loadLabel(packageManager).toString()
-                getSharedPreferences("turbofloat_prefs", android.content.Context.MODE_PRIVATE).edit()
-                    .putString("target_package", pkgName)
-                    .putString("target_app_name", appLabel)
-                    .apply()
-            }
-            .show()
     }
-}
+
     fun showAppPickerDialog() {
         val mainIntent = android.content.Intent(android.content.Intent.ACTION_MAIN, null).apply {
             addCategory(android.content.Intent.CATEGORY_LAUNCHER)
