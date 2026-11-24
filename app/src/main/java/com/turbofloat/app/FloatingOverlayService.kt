@@ -11,6 +11,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -69,7 +70,7 @@ class FloatingOverlayService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("TurboFloat Active")
-            .setContentText("Overlay box & speed boost tayari ($targetName)")
+            .setContentText("Overlay sanduku & speed boost tayari ($targetName)")
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
             .build()
@@ -164,7 +165,7 @@ class FloatingOverlayService : Service() {
             isBoxVisible = false
             topBoxView?.visibility = View.GONE
             eyeView?.alpha = 0.35f
-            Toast.makeText(this, "Icon ya jicho na kabox vimefichwa", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Icon ya jicho na sanduku vimefichwa", Toast.LENGTH_SHORT).show()
         } else {
             eyeView?.alpha = 0.95f
             toggleTopBox()
@@ -175,8 +176,8 @@ class FloatingOverlayService : Service() {
         if (topBoxView != null) return
 
         val density = resources.displayMetrics.density
-        val boxWidthPx = (320 * density).toInt()
-        val boxHeightPx = (240 * density).toInt()
+        val boxWidthPx = (330 * density).toInt()
+        val boxHeightPx = (190 * density).toInt()
 
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -196,15 +197,17 @@ class FloatingOverlayService : Service() {
         }
 
         val titleTv = TextView(this).apply {
-            text = if (targetName.isNotEmpty()) targetName else "Overlay Box"
-            setTextColor(Color.WHITE)
-            textSize = 14f
+            text = "TURBO BOX"
+            setTextColor(0xFF00E5FF.toInt())
+            textSize = 13f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val speedBtn = Button(this).apply {
             text = "🚀"
-            textSize = 14f
+            textSize = 13f
+            minWidth = 0
+            minimumWidth = 0
             setOnClickListener {
                 val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, enableDnd)
                 Toast.makeText(
@@ -216,8 +219,10 @@ class FloatingOverlayService : Service() {
         }
 
         val openInnerBtn = Button(this).apply {
-            text = "Run"
+            text = "RUN"
             textSize = 12f
+            minWidth = 0
+            minimumWidth = 0
             setOnClickListener {
                 runTargetInsideBox()
             }
@@ -226,6 +231,8 @@ class FloatingOverlayService : Service() {
         val closeBoxBtn = Button(this).apply {
             text = "✕"
             textSize = 12f
+            minWidth = 0
+            minimumWidth = 0
             setOnClickListener {
                 isBoxVisible = false
                 topBoxView?.visibility = View.GONE
@@ -238,23 +245,18 @@ class FloatingOverlayService : Service() {
         headerRow.addView(closeBoxBtn)
 
         val container = FrameLayout(this).apply {
-            setBackgroundColor(0xFF080C10.toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 16f
+                setColor(0xFF080C10.toInt())
+            }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 boxHeightPx
             ).apply {
-                topMargin = 12
+                topMargin = 10
             }
         }
-
-        val statusTv = TextView(this).apply {
-            text = "Gusa 'Run' kufungua ${if (targetName.isNotEmpty()) targetName else "app uliyochagua"} hapa ndani au gusa 🚀 ku-boost."
-            setTextColor(0xFFB0BEC5.toInt())
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setPadding(16, 16, 16, 16)
-        }
-        container.addView(statusTv)
 
         box.addView(headerRow)
         box.addView(container)
@@ -274,13 +276,77 @@ class FloatingOverlayService : Service() {
         windowManager?.addView(box, params)
         topBoxView = box
         appContainer = container
+        renderAppCardInsideBox(isRunning = false)
+    }
+
+    private fun renderAppCardInsideBox(isRunning: Boolean) {
+        val container = appContainer ?: return
+        container.removeAllViews()
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(16, 16, 16, 16)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val iconView = ImageView(this).apply {
+            val iconSize = (48 * resources.displayMetrics.density).toInt()
+            layoutParams = LinearLayout.LayoutParams(iconSize, iconSize)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            if (targetPackage.isNotEmpty()) {
+                try {
+                    setImageDrawable(packageManager.getApplicationIcon(targetPackage))
+                } catch (_: Exception) {
+                    setImageResource(android.R.drawable.sym_def_app_icon)
+                }
+            } else {
+                setImageResource(android.R.drawable.sym_def_app_icon)
+            }
+        }
+
+        val nameTv = TextView(this).apply {
+            text = if (targetName.isNotEmpty()) targetName else "Hakuna App Iliyochaguliwa"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 2)
+        }
+
+        val pkgTv = TextView(this).apply {
+            text = if (targetPackage.isNotEmpty()) targetPackage else "Rudi TurboFloat na uchague kwenye list"
+            setTextColor(0xFF90A4AE.toInt())
+            textSize = 11f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            gravity = Gravity.CENTER
+        }
+
+        val stateTv = TextView(this).apply {
+            text = if (isRunning) "Hali: Imefunguliwa • Gusa 🚀 ku-boost" else "Tayari kufunguliwa ndani ya sanduku"
+            setTextColor(if (isRunning) 0xFF00E676.toInt() else 0xFF00E5FF.toInt())
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setPadding(0, 6, 0, 0)
+        }
+
+        card.addView(iconView)
+        card.addView(nameTv)
+        card.addView(pkgTv)
+        card.addView(stateTv)
+        container.addView(card)
     }
 
     private fun toggleTopBox() {
         isBoxVisible = !isBoxVisible
         if (isBoxVisible) {
+            renderAppCardInsideBox(isRunning = false)
             topBoxView?.visibility = View.VISIBLE
-            runTargetInsideBox()
         } else {
             topBoxView?.visibility = View.GONE
         }
@@ -299,15 +365,7 @@ class FloatingOverlayService : Service() {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
             }
             startActivity(launchIntent)
-            appContainer?.removeAllViews()
-            val runningTv = TextView(this).apply {
-                text = "Inarun: $targetName ($targetPackage)\nBonyeza 🚀 juu ku-speed up muda wowote."
-                setTextColor(0xFF00E5FF.toInt())
-                textSize = 12f
-                gravity = Gravity.CENTER
-                setPadding(16, 16, 16, 16)
-            }
-            appContainer?.addView(runningTv)
+            renderAppCardInsideBox(isRunning = true)
         } else {
             Toast.makeText(this, "App ($targetName) haikupatikana", Toast.LENGTH_SHORT).show()
         }
