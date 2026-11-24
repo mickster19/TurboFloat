@@ -11,6 +11,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.os.Build
 import android.os.Handler
@@ -35,7 +37,7 @@ import androidx.core.app.NotificationCompat
 class FloatingOverlayService : Service() {
 
     private var windowManager: WindowManager? = null
-    private var eyeView: ImageView? = null
+    private var bubbleView: ImageView? = null
     private var menuBoxView: LinearLayout? = null
     private var menuBoxParams: WindowManager.LayoutParams? = null
     private var boxScrollView: ScrollView? = null
@@ -47,8 +49,9 @@ class FloatingOverlayService : Service() {
     private var isMenuOpen: Boolean = false
     private var isGamePickerVisible: Boolean = false
     private var isDndActive: Boolean = false
+    private var isRecordingState: Boolean = false
     private var boxWidthDp: Int = 345
-    private var boxHeightDp: Int = 245
+    private var boxHeightDp: Int = 250
 
     private var targetPackage: String = ""
     private var targetName: String = ""
@@ -98,7 +101,7 @@ class FloatingOverlayService : Service() {
         }
 
         startForegroundNotification()
-        showEyeBubble()
+        showAppBubble()
         buildFrontMenuBox()
         refreshSelectedGameDisplay()
         startMonitors()
@@ -138,13 +141,19 @@ class FloatingOverlayService : Service() {
         }
     }
 
+    private fun resolveAppIconDrawable() = try {
+        packageManager.getApplicationIcon(packageName)
+    } catch (_: Exception) {
+        getDrawable(android.R.drawable.sym_def_app_icon)
+    }
+
     private fun startMonitors() {
         val rx = TrafficStats.getTotalRxBytes()
         val tx = TrafficStats.getTotalTxBytes()
-        if (rx != TrafficStats.UNSUPPORTED.toLong() && tx != TrafficStats.UNSUPPORTED.toLong()) {
-            lastTotalBytes = rx + tx
+        lastTotalBytes = if (rx != TrafficStats.UNSUPPORTED.toLong() && tx != TrafficStats.UNSUPPORTED.toLong()) {
+            rx + tx
         } else {
-            lastTotalBytes = 0L
+            0L
         }
         lastNetTimestampMs = System.currentTimeMillis()
 
@@ -168,6 +177,23 @@ class FloatingOverlayService : Service() {
         }
     }
 
+    private fun currentNetworkTypeLabel(): String {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val net = cm.activeNetwork ?: return "OFF"
+            val caps = cm.getNetworkCapabilities(net) ?: return "NET"
+            when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELL"
+                else -> "NET"
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val info = cm.activeNetworkInfo
+            if (info != null && info.isConnected) info.typeName.uppercase() else "OFF"
+        }
+    }
+
     private fun updateTelemetryDisplay() {
         val nowMs = System.currentTimeMillis()
         val elapsedSec = ((nowMs - lastNetTimestampMs).coerceAtLeast(1L)) / 1000.0
@@ -185,25 +211,72 @@ class FloatingOverlayService : Service() {
             "N/A"
         }
 
-        telemetryTv?.text = "FPS: $currentFps  |  NET: $netText"
+        val netType = currentNetworkTypeLabel()
+        telemetryTv?.text = "FPS: $currentFps  |  $netType: $netText"
     }
 
-    private fun showEyeBubble() {
-        if (eyeView != null) return
+    private fun stabilizeNetworkNow() {
+        val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this, isDndActive)
+        val netType = currentNetworkTypeLabel()
+        updateTelemetryDisplay()
+        Toast.makeText(
+            this,
+            "Network Stabilizer ($netType): Freed ${freedMb}MB • Opening network settings",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        val candidates = listOf(
+            Intent("android.settings.DATA_ROAMING_SETTINGS"),
+            Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS),
+            Intent(Settings.ACTION_WIRELESS_SETTINGS)
+        )
+        for (intent in candidates) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+                return
+            }
+        }
+    }
+
+    private fun triggerScreenshotTool() {
+        Toast.makeText(
+            this,
+            "Screenshot: Use Power + Volume Down or quick-settings tile",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun toggleScreenRecordTool(btn: Button) {
+        isRecordingState = !isRecordingState
+        btn.text = if (isRecordingState) "STOP REC" else "SCREEN REC"
+        Toast.makeText(
+            this,
+            if (isRecordingState) "Screen Recorder marked ACTIVE — open system Screen Record tile"
+            else "Screen Recorder stopped",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun showAppBubble() {
+        if (bubbleView != null) {
+            bubbleView?.setImageDrawable(resolveAppIconDrawable())
+            return
+        }
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val sizePx = (48 * resources.displayMetrics.density).toInt()
+        val sizePx = (50 * resources.displayMetrics.density).toInt()
 
         val bubble = ImageView(this).apply {
-            setImageResource(android.R.drawable.ic_menu_view)
-            setColorFilter(Color.WHITE)
-            setPadding(20, 20, 20, 20)
+            setImageDrawable(resolveAppIconDrawable())
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(10, 10, 10, 10)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(0xF00B1320.toInt())
                 setStroke(3, 0xFF00E5FF.toInt())
             }
-            alpha = 0.92f
+            alpha = 0.95f
         }
 
         val params = WindowManager.LayoutParams(
@@ -257,13 +330,13 @@ class FloatingOverlayService : Service() {
         }
 
         windowManager?.addView(bubble, params)
-        eyeView = bubble
+        bubbleView = bubble
     }
 
     private fun toggleFrontMenuBox() {
         isMenuOpen = !isMenuOpen
         menuBoxView?.visibility = if (isMenuOpen) View.VISIBLE else View.GONE
-        eyeView?.alpha = if (isMenuOpen) 1.0f else 0.9f
+        bubbleView?.alpha = if (isMenuOpen) 1.0f else 0.92f
         if (isMenuOpen) {
             refreshSelectedGameDisplay()
             updateTelemetryDisplay()
@@ -530,6 +603,36 @@ class FloatingOverlayService : Service() {
             }
         }
 
+        val netFixBtn = Button(this).apply {
+            text = "NET FIX"
+            textSize = 11f
+            minWidth = 0
+            minimumWidth = 0
+            setOnClickListener {
+                stabilizeNetworkNow()
+            }
+        }
+
+        val screenshotBtn = Button(this).apply {
+            text = "SCREENSHOT"
+            textSize = 11f
+            minWidth = 0
+            minimumWidth = 0
+            setOnClickListener {
+                triggerScreenshotTool()
+            }
+        }
+
+        val recordBtn = Button(this).apply {
+            text = if (isRecordingState) "STOP REC" else "SCREEN REC"
+            textSize = 11f
+            minWidth = 0
+            minimumWidth = 0
+            setOnClickListener {
+                toggleScreenRecordTool(this)
+            }
+        }
+
         val runBtn = Button(this).apply {
             text = "RUN"
             textSize = 11f
@@ -543,6 +646,9 @@ class FloatingOverlayService : Service() {
         actionsRow.addView(dndBtn)
         actionsRow.addView(speedUpBtn)
         actionsRow.addView(antiLagBtn)
+        actionsRow.addView(netFixBtn)
+        actionsRow.addView(screenshotBtn)
+        actionsRow.addView(recordBtn)
         actionsRow.addView(runBtn)
         actionsScroll.addView(actionsRow)
 
@@ -743,14 +849,14 @@ class FloatingOverlayService : Service() {
             } catch (_: Exception) {
             }
         }
-        eyeView?.let { view ->
+        bubbleView?.let { view ->
             try {
                 windowManager?.removeView(view)
             } catch (_: Exception) {
             }
         }
         menuBoxView = null
-        eyeView = null
+        bubbleView = null
         super.onDestroy()
     }
 }
