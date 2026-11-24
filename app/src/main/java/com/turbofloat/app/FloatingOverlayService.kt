@@ -11,16 +11,20 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.net.TrafficStats
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.text.TextUtils
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -38,17 +42,49 @@ class FloatingOverlayService : Service() {
     private var gameGridContainer: LinearLayout? = null
     private var selectedGameBanner: TextView? = null
     private var selectedGameIcon: ImageView? = null
+    private var telemetryTv: TextView? = null
 
     private var isMenuOpen: Boolean = false
     private var isGamePickerVisible: Boolean = false
     private var isDndActive: Boolean = false
-    private var boxWidthDp: Int = 340
-    private var boxHeightDp: Int = 220
+    private var boxWidthDp: Int = 345
+    private var boxHeightDp: Int = 245
 
     private var targetPackage: String = ""
     private var targetName: String = ""
     private var useFreeform: Boolean = false
     private var enableDnd: Boolean = false
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var frameCounter = 0
+    private var lastFpsTimestampNanos = 0L
+    private var currentFps = 0
+
+    private var lastTotalBytes = 0L
+    private var lastNetTimestampMs = 0L
+
+    private val fpsFrameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (lastFpsTimestampNanos == 0L) {
+                lastFpsTimestampNanos = frameTimeNanos
+            }
+            frameCounter++
+            val elapsedNanos = frameTimeNanos - lastFpsTimestampNanos
+            if (elapsedNanos >= 1_000_000_000L) {
+                currentFps = frameCounter
+                frameCounter = 0
+                lastFpsTimestampNanos = frameTimeNanos
+            }
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
+    private val telemetryRunnable = object : Runnable {
+        override fun run() {
+            updateTelemetryDisplay()
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,6 +101,7 @@ class FloatingOverlayService : Service() {
         showEyeBubble()
         buildFrontMenuBox()
         refreshSelectedGameDisplay()
+        startMonitors()
 
         return START_STICKY
     }
@@ -99,6 +136,56 @@ class FloatingOverlayService : Service() {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
+    }
+
+    private fun startMonitors() {
+        val rx = TrafficStats.getTotalRxBytes()
+        val tx = TrafficStats.getTotalTxBytes()
+        if (rx != TrafficStats.UNSUPPORTED.toLong() && tx != TrafficStats.UNSUPPORTED.toLong()) {
+            lastTotalBytes = rx + tx
+        } else {
+            lastTotalBytes = 0L
+        }
+        lastNetTimestampMs = System.currentTimeMillis()
+
+        Choreographer.getInstance().removeFrameCallback(fpsFrameCallback)
+        Choreographer.getInstance().postFrameCallback(fpsFrameCallback)
+
+        mainHandler.removeCallbacks(telemetryRunnable)
+        mainHandler.post(telemetryRunnable)
+    }
+
+    private fun stopMonitors() {
+        Choreographer.getInstance().removeFrameCallback(fpsFrameCallback)
+        mainHandler.removeCallbacks(telemetryRunnable)
+    }
+
+    private fun formatSpeed(bytesPerSec: Double): String {
+        return when {
+            bytesPerSec >= 1_048_576.0 -> String.format("%.1f MB/s", bytesPerSec / 1_048_576.0)
+            bytesPerSec >= 1024.0 -> String.format("%.0f KB/s", bytesPerSec / 1024.0)
+            else -> "${bytesPerSec.toInt()} B/s"
+        }
+    }
+
+    private fun updateTelemetryDisplay() {
+        val nowMs = System.currentTimeMillis()
+        val elapsedSec = ((nowMs - lastNetTimestampMs).coerceAtLeast(1L)) / 1000.0
+
+        val rx = TrafficStats.getTotalRxBytes()
+        val tx = TrafficStats.getTotalTxBytes()
+        val netText = if (rx != TrafficStats.UNSUPPORTED.toLong() && tx != TrafficStats.UNSUPPORTED.toLong()) {
+            val totalNow = rx + tx
+            val diffBytes = (totalNow - lastTotalBytes).coerceAtLeast(0L)
+            lastTotalBytes = totalNow
+            lastNetTimestampMs = nowMs
+            formatSpeed(diffBytes / elapsedSec)
+        } else {
+            lastNetTimestampMs = nowMs
+            "N/A"
+        }
+
+        telemetryTv?.text = "FPS: $currentFps  |  NET: $netText"
     }
 
     private fun showEyeBubble() {
@@ -179,6 +266,7 @@ class FloatingOverlayService : Service() {
         eyeView?.alpha = if (isMenuOpen) 1.0f else 0.9f
         if (isMenuOpen) {
             refreshSelectedGameDisplay()
+            updateTelemetryDisplay()
         }
     }
 
@@ -231,7 +319,7 @@ class FloatingOverlayService : Service() {
             minimumWidth = 0
             setOnClickListener {
                 boxWidthDp = (boxWidthDp - 30).coerceAtLeast(250)
-                boxHeightDp = (boxHeightDp - 35).coerceAtLeast(150)
+                boxHeightDp = (boxHeightDp - 35).coerceAtLeast(160)
                 applyBoxDimensions()
             }
         }
@@ -243,7 +331,7 @@ class FloatingOverlayService : Service() {
             minimumWidth = 0
             setOnClickListener {
                 boxWidthDp = (boxWidthDp + 30).coerceAtMost(440)
-                boxHeightDp = (boxHeightDp + 35).coerceAtMost(380)
+                boxHeightDp = (boxHeightDp + 35).coerceAtMost(400)
                 applyBoxDimensions()
             }
         }
@@ -303,6 +391,27 @@ class FloatingOverlayService : Service() {
                 else -> false
             }
         }
+
+        val hudBar = TextView(this).apply {
+            text = "FPS: 0  |  NET: 0 KB/s"
+            setTextColor(0xFF00E676.toInt())
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(10, 8, 10, 8)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 12f
+                setColor(0xFF080C12.toInt())
+                setStroke(1, 0xFF1F3A52.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 8
+            }
+        }
+        telemetryTv = hudBar
 
         val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -367,9 +476,25 @@ class FloatingOverlayService : Service() {
         }
         gameGridContainer = gamesContainer
 
+        val actionsScroll = HorizontalScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 6
+            }
+        }
+
+        val actionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         val dndBtn = Button(this).apply {
             text = if (isDndActive) "DND: ON" else "DND"
             textSize = 11f
+            minWidth = 0
+            minimumWidth = 0
             setOnClickListener {
                 toggleDnd(this)
             }
@@ -378,6 +503,8 @@ class FloatingOverlayService : Service() {
         val speedUpBtn = Button(this).apply {
             text = "SPEED UP 🚀"
             textSize = 11f
+            minWidth = 0
+            minimumWidth = 0
             setOnClickListener {
                 val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, isDndActive)
                 Toast.makeText(
@@ -391,11 +518,13 @@ class FloatingOverlayService : Service() {
         val antiLagBtn = Button(this).apply {
             text = "ANTI-LAG"
             textSize = 11f
+            minWidth = 0
+            minimumWidth = 0
             setOnClickListener {
                 val freedMb = GameBoosterEngine.boostMemoryAndOptimize(this@FloatingOverlayService, true)
                 Toast.makeText(
                     this@FloatingOverlayService,
-                    "Anti-Lag enabled (${freedMb}MB freed)",
+                    "Anti-Lag active (${freedMb}MB freed)",
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -404,21 +533,27 @@ class FloatingOverlayService : Service() {
         val runBtn = Button(this).apply {
             text = "RUN"
             textSize = 11f
+            minWidth = 0
+            minimumWidth = 0
             setOnClickListener {
                 launchSelectedGame()
             }
         }
 
+        actionsRow.addView(dndBtn)
+        actionsRow.addView(speedUpBtn)
+        actionsRow.addView(antiLagBtn)
+        actionsRow.addView(runBtn)
+        actionsScroll.addView(actionsRow)
+
         contentLayout.addView(activeRow)
         contentLayout.addView(chooseGameBtn)
         contentLayout.addView(gamesContainer)
-        contentLayout.addView(dndBtn)
-        contentLayout.addView(speedUpBtn)
-        contentLayout.addView(antiLagBtn)
-        contentLayout.addView(runBtn)
+        contentLayout.addView(actionsScroll)
 
         scrollView.addView(contentLayout)
         outerBox.addView(headerRow)
+        outerBox.addView(hudBar)
         outerBox.addView(scrollView)
 
         windowManager?.addView(outerBox, params)
@@ -601,6 +736,7 @@ class FloatingOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        stopMonitors()
         menuBoxView?.let { view ->
             try {
                 windowManager?.removeView(view)
