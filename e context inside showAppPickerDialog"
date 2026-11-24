@@ -1,0 +1,45 @@
+[1mdiff --git a/app/src/main/java/com/turbofloat/app/MainActivity.kt b/app/src/main/java/com/turbofloat/app/MainActivity.kt[m
+[1mindex e2fcbaf..cda4c19 100644[m
+[1m--- a/app/src/main/java/com/turbofloat/app/MainActivity.kt[m
+[1m+++ b/app/src/main/java/com/turbofloat/app/MainActivity.kt[m
+[36m@@ -183,25 +183,30 @@[m [mimport androidx.core.content.ContextCompatclass MainActivity : AppCompatActivity[m
+         return mode == AppOpsManager.MODE_ALLOWED[m
+     }[m
+ [m
+[31m-    fun showAppPickerDialog() {[m
+[32m+[m[32m    fun showAppPickerDialog(context: android.content.Context = this) {[m
+         val mainIntent = android.content.Intent(android.content.Intent.ACTION_MAIN, null).apply {[m
+             addCategory(android.content.Intent.CATEGORY_LAUNCHER)[m
+         }[m
+[31m-        val resolveInfos = packageManager.queryIntentActivities(mainIntent, 0)[m
+[31m-            .filter { it.activityInfo.packageName != packageName }[m
+[31m-            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }[m
+[31m-        val labels: Array<CharSequence> = resolveInfos.map { it.loadLabel(packageManager).toString() as CharSequence }.toTypedArray()[m
+[31m-        androidx.appcompat.app.AlertDialog.Builder(this)[m
+[32m+[m[32m        val resolveInfos = context.packageManager.queryIntentActivities(mainIntent, 0)[m
+[32m+[m[32m            .filter { it.activityInfo.packageName != context.packageName }[m
+[32m+[m[32m            .sortedBy { it.loadLabel(context.packageManager).toString().lowercase() }[m
+[32m+[m
+[32m+[m[32m        val labels: Array<CharSequence> = resolveInfos.map {[m
+[32m+[m[32m            it.loadLabel(context.packageManager).toString() as CharSequence[m
+[32m+[m[32m        }.toTypedArray()[m
+[32m+[m
+[32m+[m[32m        androidx.appcompat.app.AlertDialog.Builder(context)[m
+             .setTitle("Chagua App ya Floating")[m
+             .setItems(labels) { _, which: Int ->[m
+                 val chosen = resolveInfos[which][m
+                 val pkgName = chosen.activityInfo.packageName[m
+[31m-                val appLabel = chosen.loadLabel(packageManager).toString()[m
+[31m-                getSharedPreferences("turbofloat_prefs", android.content.Context.MODE_PRIVATE).edit()[m
+[32m+[m[32m                val appLabel = chosen.loadLabel(context.packageManager).toString()[m
+[32m+[m
+[32m+[m[32m                context.getSharedPreferences("turbofloat_prefs", android.content.Context.MODE_PRIVATE).edit()[m
+                     .putString("target_package", pkgName)[m
+                     .putString("target_app_name", appLabel)[m
+                     .apply()[m
+             }[m
+             .show()[m
+     }[m
+[31m-}[m
+\ No newline at end of file[m
+[32m+[m[32m}[m
