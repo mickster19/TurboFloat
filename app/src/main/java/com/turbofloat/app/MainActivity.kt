@@ -29,7 +29,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvRamInfo: TextView
 
     private var selectedPackage: String = ""
-    private var selectedAppName: String = "Haijachaguliwa (Chagua kwenye list)"
+    private var selectedAppName: String = "None selected"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,24 +50,21 @@ class MainActivity : AppCompatActivity() {
         val switchDnd = findViewById<Switch>(R.id.switchDnd)
         val switchFreeform = findViewById<Switch>(R.id.switchFreeform)
 
-        tvSelectedApp.text = "App Iliyochaguliwa: $selectedAppName"
-
+        tvSelectedApp.text = "Selected Game: $selectedAppName"
         tvSelectedApp.setOnClickListener {
-            showInstalledAppsDialog()
+            showInstalledAppsDialog(switchDnd.isChecked, switchFreeform.isChecked)
         }
 
-        btnStartOverlay.findViewById<Button>(R.id.btnStartOverlay)
-
-        val pickAppButton = Button(this).apply {
-            text = "CHAGUA APP KUTOKA KWENYE LIST"
+        val pickGameButton = Button(this).apply {
+            text = "SELECT GAME FROM LIST"
             setOnClickListener {
-                showInstalledAppsDialog()
+                showInstalledAppsDialog(switchDnd.isChecked, switchFreeform.isChecked)
             }
         }
         (tvSelectedApp.parent as? android.view.ViewGroup)?.let { parent ->
             val idx = parent.indexOfChild(tvSelectedApp)
             if (idx >= 0) {
-                parent.addView(pickAppButton, idx + 1)
+                parent.addView(pickGameButton, idx + 1)
             }
         }
 
@@ -91,7 +88,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 startActivity(intent)
             } else {
-                Toast.makeText(this, "Ruhusa ya Overlay tayari imewashwa!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Overlay permission already enabled", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -99,7 +96,7 @@ class MainActivity : AppCompatActivity() {
             if (!hasUsageStatsPermission()) {
                 startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
             } else {
-                Toast.makeText(this, "Ruhusa ya Usage Access tayari ipo!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Usage access already enabled", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -108,7 +105,7 @@ class MainActivity : AppCompatActivity() {
             if (!nm.isNotificationPolicyAccessGranted) {
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
             } else {
-                Toast.makeText(this, "Ruhusa ya Gaming DND tayari ipo!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Do Not Disturb access already enabled", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -117,62 +114,66 @@ class MainActivity : AppCompatActivity() {
             updateRamDisplay()
             Toast.makeText(
                 this,
-                "RAM Imesafishwa! Imeokoa ${freedMb}MB kwa ajili ya Game!",
+                "Speed Up 🚀: Freed ${freedMb}MB RAM",
                 Toast.LENGTH_LONG
             ).show()
         }
 
         btnStartOverlay.setOnClickListener {
             if (selectedPackage.isEmpty()) {
-                Toast.makeText(
-                    this,
-                    "Chagua app kwanza kutoka kwenye list!",
-                    Toast.LENGTH_SHORT
-                ).show()
-                showInstalledAppsDialog()
+                Toast.makeText(this, "Select a game from the list first", Toast.LENGTH_SHORT).show()
+                showInstalledAppsDialog(switchDnd.isChecked, switchFreeform.isChecked)
                 return@setOnClickListener
             }
 
             if (!Settings.canDrawOverlays(this)) {
-                Toast.makeText(
-                    this,
-                    "Tafadhali washa ruhusa ya 'Display over other apps' kwanza!",
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this, "Enable 'Display over other apps' first", Toast.LENGTH_LONG).show()
                 btnPermOverlay.performClick()
                 return@setOnClickListener
             }
 
-            GameBoosterEngine.boostMemoryAndOptimize(this, switchDnd.isChecked)
-
-            val serviceIntent = Intent(this, FloatingOverlayService::class.java).apply {
-                putExtra("TARGET_PACKAGE", selectedPackage)
-                putExtra("TARGET_NAME", selectedAppName)
-                putExtra("USE_FREEFORM", switchFreeform.isChecked)
-                putExtra("ENABLE_DND", switchDnd.isChecked)
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
-
-            Toast.makeText(
-                this,
-                "Ka-icon ka Jicho kamewashwa kwa ajili ya $selectedAppName!",
-                Toast.LENGTH_LONG
-            ).show()
+            startBoosterService(switchDnd.isChecked, switchFreeform.isChecked)
+            Toast.makeText(this, "Game Booster enabled for $selectedAppName", Toast.LENGTH_SHORT).show()
         }
 
         btnStopOverlay.setOnClickListener {
             stopService(Intent(this, FloatingOverlayService::class.java))
             GameBoosterEngine.restoreNormalMode(this)
-            Toast.makeText(this, "TurboFloat imezimwa.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Game Booster stopped", Toast.LENGTH_SHORT).show()
+        }
+
+        if (intent?.getBooleanExtra("OPEN_APP_PICKER", false) == true) {
+            showInstalledAppsDialog(switchDnd.isChecked, switchFreeform.isChecked)
         }
     }
 
-    private fun showInstalledAppsDialog() {
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent?.getBooleanExtra("OPEN_APP_PICKER", false) == true) {
+            val switchDnd = findViewById<Switch>(R.id.switchDnd)
+            val switchFreeform = findViewById<Switch>(R.id.switchFreeform)
+            showInstalledAppsDialog(switchDnd.isChecked, switchFreeform.isChecked)
+        }
+    }
+
+    private fun startBoosterService(enableDnd: Boolean, useFreeform: Boolean) {
+        GameBoosterEngine.boostMemoryAndOptimize(this, enableDnd)
+        val serviceIntent = Intent(this, FloatingOverlayService::class.java).apply {
+            putExtra("TARGET_PACKAGE", selectedPackage)
+            putExtra("TARGET_NAME", selectedAppName)
+            putExtra("USE_FREEFORM", useFreeform)
+            putExtra("ENABLE_DND", enableDnd)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+    }
+
+    private fun showInstalledAppsDialog(enableDnd: Boolean, useFreeform: Boolean) {
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
@@ -198,22 +199,25 @@ class MainActivity : AppCompatActivity() {
             .sortedBy { (label, _) -> label.lowercase() }
 
         if (appsList.isEmpty()) {
-            Toast.makeText(this, "Hakuna apps zilizopatikana kwenye list.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No apps found", Toast.LENGTH_SHORT).show()
             return
         }
 
         val displayNames = appsList.map { (label, pkg) -> "$label ($pkg)" }.toTypedArray()
 
         AlertDialog.Builder(this)
-            .setTitle("Chagua App ya Ku-overlay")
+            .setTitle("Select Game / App")
             .setItems(displayNames) { _, which ->
                 val chosen = appsList[which]
                 selectedAppName = chosen.first
                 selectedPackage = chosen.second
-                tvSelectedApp.text = "App Iliyochaguliwa: $selectedAppName ($selectedPackage)"
-                Toast.makeText(this, "Umechagua: $selectedAppName", Toast.LENGTH_SHORT).show()
+                tvSelectedApp.text = "Selected Game: $selectedAppName ($selectedPackage)"
+                if (Settings.canDrawOverlays(this)) {
+                    startBoosterService(enableDnd, useFreeform)
+                }
+                Toast.makeText(this, "Selected: $selectedAppName", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("Funga", null)
+            .setNegativeButton("Close", null)
             .show()
     }
 
@@ -225,22 +229,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshPermissionBadges() {
         val overlayOk = Settings.canDrawOverlays(this)
-        tvOverlayStatus.text = if (overlayOk) "IMEWASHWA ✓" else "HAIJAWASHWA ✗"
+        tvOverlayStatus.text = if (overlayOk) "ENABLED ✓" else "DISABLED ✗"
         tvOverlayStatus.setTextColor(if (overlayOk) 0xFF00E676.toInt() else 0xFFFF5252.toInt())
 
         val usageOk = hasUsageStatsPermission()
-        tvUsageStatus.text = if (usageOk) "IMEWASHWA ✓" else "HAIJAWASHWA ✗"
+        tvUsageStatus.text = if (usageOk) "ENABLED ✓" else "DISABLED ✗"
         tvUsageStatus.setTextColor(if (usageOk) 0xFF00E676.toInt() else 0xFFFF5252.toInt())
 
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val dndOk = nm.isNotificationPolicyAccessGranted
-        tvDndStatus.text = if (dndOk) "IMEWASHWA ✓" else "HIARI (DND)"
+        tvDndStatus.text = if (dndOk) "ENABLED ✓" else "OPTIONAL (DND)"
         tvDndStatus.setTextColor(if (dndOk) 0xFF00E676.toInt() else 0xFFFFAB40.toInt())
     }
 
     private fun updateRamDisplay() {
         val stats = GameBoosterEngine.getRamStats(this)
-        tvRamInfo.text = "RAM Inayotumika: ${stats.usedMb} MB / ${stats.totalMb} MB (${stats.usedPercent}%)"
+        tvRamInfo.text = "RAM Usage: ${stats.usedMb} MB / ${stats.totalMb} MB (${stats.usedPercent}%)"
     }
 
     private fun hasUsageStatsPermission(): Boolean {
