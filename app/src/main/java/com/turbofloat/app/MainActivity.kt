@@ -183,29 +183,8 @@ import androidx.core.content.ContextCompatclass MainActivity : AppCompatActivity
         }
         return mode == AppOpsManager.MODE_ALLOWED
     
-    fun showAppPickerDialog() {
-        val ctx = this@MainActivity
-        val mainIntent = android.content.Intent(android.content.Intent.ACTION_MAIN, null).apply {
-            addCategory(android.content.Intent.CATEGORY_LAUNCHER)
-        }
-        val resolveInfos = ctx.packageManager.queryIntentActivities(mainIntent, 0)
-            .filter { it.activityInfo.packageName != ctx.packageName }
-            .sortedBy { it.loadLabel(ctx.packageManager).toString().lowercase() }
-        val labels: Array<CharSequence> = resolveInfos.map { it.loadLabel(ctx.packageManager).toString() as CharSequence }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Chagua App ya Floating")
-            .setItems(labels) { _, which: Int ->
-                val chosen = resolveInfos[which]
-                val pkgName = chosen.activityInfo.packageName
-                val appLabel = chosen.loadLabel(ctx.packageManager).toString()
-                ctx.getSharedPreferences("turbofloat_prefs", android.content.Context.MODE_PRIVATE).edit()
-                    .putString("target_package", pkgName)
-                    .putString("target_app_name", appLabel)
-                    .apply()
-            }
-            .show()
-    }
 }
+
     fun showAppPickerDialog() {
         val ctx = this@MainActivity
         val mainIntent = android.content.Intent(android.content.Intent.ACTION_MAIN, null).apply {
