@@ -116,7 +116,47 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            root.addView(titleTv)
+                    val perfManager = TurboPerformanceManager(this)
+
+        val btnProtectedApps = android.widget.Button(this).apply {
+            text = "PROTECTED APPS (${perfManager.getProtectedApps().size})"
+            setOnClickListener {
+                val sampleApps = arrayOf("jp.konami.pesam", "com.whatsapp", "com.pubg.imobile", "com.dts.freefireth")
+                val current = perfManager.getProtectedApps()
+                val checked = BooleanArray(sampleApps.size) { idx -> current.contains(sampleApps[idx]) }
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Protected Apps (Keep Alive)")
+                    .setMultiChoiceItems(sampleApps, checked) { _, which, isChecked ->
+                        perfManager.setAppProtected(sampleApps[which], isChecked)
+                    }
+                    .setPositiveButton("Save") { _, _ ->
+                        text = "PROTECTED APPS (${perfManager.getProtectedApps().size})"
+                        android.widget.Toast.makeText(this@MainActivity, "Protected apps updated", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Dev Options") { _, _ ->
+                        perfManager.openDeveloperOptions()
+                    }
+                    .show()
+            }
+        }
+
+        val btnSharpTouch = android.widget.Button(this).apply {
+            text = if (perfManager.isSharpTouchEnabled()) "SHARP TOUCH: ON" else "SHARP TOUCH: OFF"
+            setOnClickListener {
+                val nextState = !perfManager.isSharpTouchEnabled()
+                perfManager.setSharpTouchEnabled(nextState)
+                text = if (nextState) "SHARP TOUCH: ON" else "SHARP TOUCH: OFF"
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    if (nextState) "Sharp Touch enabled" else "Sharp Touch disabled",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        root.addView(btnProtectedApps)
+        root.addView(btnSharpTouch)
+        root.addView(titleTv)
             root.addView(gameTv)
             root.addView(btnTurnOn)
             root.addView(btnTurnOff)
