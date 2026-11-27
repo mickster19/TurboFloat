@@ -39,27 +39,28 @@ class TurboPerformanceManager(private val context: Context) {
         prefs.edit().putBoolean("sharp_touch_enabled", enabled).apply()
     }
 
-    fun getInstalledLaunchableApps(): List<InstalledAppItem> {
+    fun getAllInstalledAppsWithIconAndName(): List<InstalledAppItem> {
         val pm = context.packageManager
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-
-        val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(0L))
+        val appInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0L))
         } else {
             @Suppress("DEPRECATION")
-            pm.queryIntentActivities(mainIntent, 0)
+            pm.getInstalledApplications(0)
         }
 
         val seenPackages = HashSet<String>()
         val result = ArrayList<InstalledAppItem>()
 
-        for (info in resolveInfos) {
-            val pkg = info.activityInfo?.packageName ?: continue
+        for (appInfo in appInfos) {
+            val pkg = appInfo.packageName ?: continue
             if (pkg == context.packageName || !seenPackages.add(pkg)) continue
-            val label = info.loadLabel(pm)?.toString()?.trim().orEmpty().ifEmpty { pkg }
-            val icon = info.loadIcon(pm)
+
+            val label = pm.getApplicationLabel(appInfo)?.toString()?.trim().orEmpty().ifEmpty { pkg }
+            val icon = try {
+                pm.getApplicationIcon(appInfo)
+            } catch (_: Exception) {
+                pm.defaultActivityIcon
+            }
             result.add(InstalledAppItem(label, pkg, icon))
         }
 
