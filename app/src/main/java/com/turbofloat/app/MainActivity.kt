@@ -231,4 +231,66 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Picker error: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
+
+    private fun showProtectedAppsWithIconsDialog(perfManager: TurboPerformanceManager, onSaved: () -> Unit) {
+        val apps = perfManager.getInstalledGamesWithIconAndName()
+        val selected = perfManager.getProtectedApps()
+
+        val scrollView = android.widget.ScrollView(this).apply {
+            setPadding(24, 16, 24, 16)
+        }
+        val listContainer = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+
+        for (app in apps) {
+            val row = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(8, 12, 8, 12)
+            }
+
+            val iconView = android.widget.ImageView(this).apply {
+                setImageDrawable(app.icon)
+                layoutParams = android.widget.LinearLayout.LayoutParams(88, 88)
+            }
+
+            val titleBox = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.WRAP_CONTENT, 1f).apply {
+                    marginStart = 20
+                }
+            }
+
+            val nameTv = android.widget.TextView(this).apply {
+                text = app.appName
+                textSize = 15f
+                setTextColor(android.graphics.Color.WHITE)
+            }
+
+            titleBox.addView(nameTv)
+
+            val checkBox = android.widget.CheckBox(this).apply {
+                isChecked = selected.contains(app.packageName)
+                setOnCheckedChangeListener { _, isChecked ->
+                    perfManager.setAppProtected(app.packageName, isChecked)
+                }
+            }
+
+            row.addView(iconView)
+            row.addView(titleBox)
+            row.addView(checkBox)
+            listContainer.addView(row)
+        }
+
+        scrollView.addView(listContainer)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Protected Games (${apps.size})")
+            .setView(scrollView)
+            .setPositiveButton("Done") { _, _ -> onSaved() }
+            .setNegativeButton("Dev Options") { _, _ -> perfManager.openDeveloperOptions() }
+            .show()
+    }
+
 }
