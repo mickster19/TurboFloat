@@ -257,7 +257,7 @@ class MainActivity : AppCompatActivity() {
 
             val titleBox = android.widget.LinearLayout(this).apply {
                 orientation = android.widget.LinearLayout.VERTICAL
-                layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = 20
                 }
             }
