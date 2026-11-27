@@ -2,6 +2,7 @@ package com.turbofloat.app
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.os.Build
@@ -39,7 +40,24 @@ class TurboPerformanceManager(private val context: Context) {
         prefs.edit().putBoolean("sharp_touch_enabled", enabled).apply()
     }
 
-    fun getAllInstalledAppsWithIconAndName(): List<InstalledAppItem> {
+    private fun isLikelyGame(appInfo: ApplicationInfo, label: String, pkg: String): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && appInfo.category == ApplicationInfo.CATEGORY_GAME) {
+            return true
+        }
+        @Suppress("DEPRECATION")
+        if ((appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0) {
+            return true
+        }
+        val hay = "${label.lowercase()} ${pkg.lowercase()}"
+        val gameHints = listOf(
+            "pes", "efootball", "konami", "pubg", "freefire", "dts.", "cod", "callofduty",
+            "bus", "bussid", "simulator", "truck", "racing", "game", "craft", "survival",
+            "battle", "royale", "subway", "asphalt", "fifa", "fc2", "dreamleague", "dls"
+        )
+        return gameHints.any { hay.contains(it) }
+    }
+
+    fun getInstalledGamesWithIconAndName(): List<InstalledAppItem> {
         val pm = context.packageManager
         val appInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0L))
@@ -56,6 +74,8 @@ class TurboPerformanceManager(private val context: Context) {
             if (pkg == context.packageName || !seenPackages.add(pkg)) continue
 
             val label = pm.getApplicationLabel(appInfo)?.toString()?.trim().orEmpty().ifEmpty { pkg }
+            if (!isLikelyGame(appInfo, label, pkg)) continue
+
             val icon = try {
                 pm.getApplicationIcon(appInfo)
             } catch (_: Exception) {

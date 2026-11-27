@@ -119,24 +119,11 @@ class MainActivity : AppCompatActivity() {
                     val perfManager = TurboPerformanceManager(this)
 
         val btnProtectedApps = android.widget.Button(this).apply {
-            text = "PROTECTED APPS (${perfManager.getProtectedApps().size})"
+            text = "PROTECTED GAMES (${perfManager.getProtectedApps().size})"
             setOnClickListener {
-                val sampleApps = arrayOf("jp.konami.pesam", "com.whatsapp", "com.pubg.imobile", "com.dts.freefireth")
-                val current = perfManager.getProtectedApps()
-                val checked = BooleanArray(sampleApps.size) { idx -> current.contains(sampleApps[idx]) }
-                android.app.AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Protected Apps (Keep Alive)")
-                    .setMultiChoiceItems(sampleApps, checked) { _, which, isChecked ->
-                        perfManager.setAppProtected(sampleApps[which], isChecked)
-                    }
-                    .setPositiveButton("Save") { _, _ ->
-                        text = "PROTECTED APPS (${perfManager.getProtectedApps().size})"
-                        android.widget.Toast.makeText(this@MainActivity, "Protected apps updated", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("Dev Options") { _, _ ->
-                        perfManager.openDeveloperOptions()
-                    }
-                    .show()
+                showProtectedAppsWithIconsDialog(perfManager) {
+                    text = "PROTECTED GAMES (${perfManager.getProtectedApps().size})"
+                }
             }
         }
 
